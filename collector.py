@@ -2,6 +2,16 @@ import os, sys, datetime as dt
 import yfinance as yf
 import pymysql
 
+
+def env_int(name, default):
+    v = os.getenv(name)
+    if v is None or v.strip() == "":
+        return default
+    try:
+        return int(v.strip())
+    except ValueError:
+        raise ValueError(f"{name} must be an integer, got {v!r}")
+
 DB_HOST = os.getenv("DB_HOST")
 DB_USER = os.getenv("DB_USER")
 DB_PASS = os.getenv("DB_PASS")
