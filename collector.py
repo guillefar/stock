@@ -16,7 +16,7 @@ SQL_HOLDINGS = (
 )
 
 def connect():
-    return pymysql.connect(host=DB_HOST, user=DB_USER, password=DB_PASS, database=DB_NAME, autocommit=True)
+    return pymysql.connect(host=DB_HOST, user=DB_USER, password=DB_PASS, database=DB_NAME, port=DB_PORT, autocommit=True)
 
 def insert_snapshot(cur, ticker_id, as_of, price, source="yfinance"):
     cur.execute(
