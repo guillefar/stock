@@ -1,0 +1,42 @@
+name: Aiven MySQL keepalive
+
+on:
+  schedule:
+    - cron: '3 * * * *'   # every hour at minute 3 (UTC)
+  workflow_dispatch: {}     # allow manual run
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: mysql-keepalive
+      cancel-in-progress: false
+    steps:
+      - name: Install MySQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mysql-client
+
+      # Optional: if you store the Aiven CA cert in a secret, we use VERIFY_IDENTITY
+      - name: Write Aiven CA cert (optional)
+        if: ${{ secrets.AIVEN_CA_PEM != '' }}
+        run: |
+          echo "${AIVEN_CA_PEM}" > ca.pem
+
+      - name: Ping database
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASS: ${{ secrets.DB_PASS }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_SSL_MODE: ${{ secrets.DB_SSL_MODE }}  # optional; defaults to REQUIRED
+        run: |
+          set -euo pipefail
+          SSL_ARG="--ssl-mode=${DB_SSL_MODE:-REQUIRED}"
+          if [ -f ca.pem ]; then
+            SSL_ARG="--ssl-mode=VERIFY_IDENTITY --ssl-ca=ca.pem"
+          fi
+          mysql -h "$DB_HOST" -P "${DB_PORT:-3306}" -u "$DB_USER" -p"$DB_PASS" $SSL_ARG \
+            -e "SELECT NOW() AS ping_utc, CURRENT_USER() AS user, DATABASE() AS db;" "$DB_NAME"
