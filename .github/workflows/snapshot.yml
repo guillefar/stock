@@ -1,7 +1,7 @@
 name: Daily portfolio snapshot
 on:
   schedule:
-    - cron: "5 17 * * 1-5" # 17:05 UTC; ~18:05 Europe/Madrid in winter
+    - cron: "5 22 * * 1-5" # 17:05 UTC; ~18:05 Europe/Madrid in winter
   workflow_dispatch: {}
 
 jobs:
