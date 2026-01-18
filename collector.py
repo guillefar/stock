@@ -34,9 +34,6 @@ def insert_snapshot(cur, ticker_id, price, source="yfinance"):
     cur.execute("""
         INSERT INTO price_snapshots (ticker_id, as_of_date, price, price_source)
         VALUES (%s, UTC_TIMESTAMP(), %s, %s)
-        ON DUPLICATE KEY UPDATE
-          price = VALUES(price),
-          price_source = VALUES(price_source)
     """, (ticker_id, float(price), source))
 
 def main():
