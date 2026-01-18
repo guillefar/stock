@@ -29,15 +29,15 @@ SQL_HOLDINGS = (
 def connect():
     return pymysql.connect(host=DB_HOST, user=DB_USER, password=DB_PASS, database=DB_NAME, port=DB_PORT, autocommit=True)
 
-def insert_snapshot(cur, ticker_id, as_of, price, source="yfinance"):
-    cur.execute(
-        """
-        INSERT INTO price_snapshots(ticker_id, as_of_date, price, price_source)
-        VALUES(%s,%s,%s,%s)
-        ON DUPLICATE KEY UPDATE price=VALUES(price), price_source=VALUES(price_source)
-        """,
-        (ticker_id, as_of, price, source),
-    )
+
+def insert_snapshot(cur, ticker_id, price, source="yfinance"):
+    cur.execute("""
+        INSERT INTO price_snapshots (ticker_id, as_of_date, price, price_source)
+        VALUES (%s, UTC_TIMESTAMP(), %s, %s)
+        ON DUPLICATE KEY UPDATE
+          price = VALUES(price),
+          price_source = VALUES(price_source)
+    """, (ticker_id, price, source))
 
 def main():
     cn = connect()

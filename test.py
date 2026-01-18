@@ -5,10 +5,10 @@ symbols = os.getenv("SYMBOLS", "KRKNF,RR.L,1GOOGL.MI,XESC.DE,NBIS,RKLB,VUSA.AS,S
 
 
 
-for sym in symbols:
-    dat=yf.Ticker(sym)
-    print (sym)
-    pprint.pprint(dat.info['symbol'])
+#for sym in symbols:
+#print (sym)
+dat=yf.Ticker('DE000A2QP4B6.SG')
+pprint.pprint(dat.info['symbol'])
 
 
 #data = yf.download(symbols, period="2d", interval="1d", group_by="ticker", auto_adjust=False, threads=True)
