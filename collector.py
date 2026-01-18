@@ -37,7 +37,7 @@ def insert_snapshot(cur, ticker_id, price, source="yfinance"):
         ON DUPLICATE KEY UPDATE
           price = VALUES(price),
           price_source = VALUES(price_source)
-    """, (ticker_id, price, source))
+    """, (ticker_id, float(price), source))
 
 def main():
     cn = connect()
@@ -60,7 +60,7 @@ def main():
         except Exception:
             print(f"No close for {sym}", file=sys.stderr)
             continue
-        insert_snapshot(cur, ticker_ids[idx], AS_OF, close)
+            insert_snapshot(cur, tid, close)
 
     print(f"Inserted/updated {len(symbols)} snapshots for {AS_OF}")
 
