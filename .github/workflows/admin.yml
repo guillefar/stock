@@ -1,0 +1,73 @@
+name: Portfolio Admin
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What do you want to add?"
+        type: choice
+        options: [add_holding, add_watch]
+        required: true
+      symbol:
+        description: "Ticker symbol (e.g., AMD, RR.L, XESC.DE)"
+        required: true
+      currency:
+        description: "Currency (e.g., USD, EUR, GBX)"
+        required: true
+        default: USD
+      quantity:
+        description: "Quantity (only for add_holding)"
+        required: false
+        default: "0"
+      avg_cost:
+        description: "Avg cost per share (only for add_holding)"
+        required: false
+        default: "0"
+      note:
+        description: "Optional note (only for add_watch)"
+        required: false
+        default: ""
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      DB_HOST: ${{ secrets.DB_HOST }}
+      DB_PORT: ${{ secrets.DB_PORT }}
+      DB_USER: ${{ secrets.DB_USER }}
+      DB_PASS: ${{ secrets.DB_PASS }}
+      DB_NAME: ${{ secrets.DB_NAME }}
+    steps:
+      - name: Install MySQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mysql-client
+
+      - name: Execute request
+        run: |
+          set -euo pipefail
+          ACTION="${{ github.event.inputs.action }}"
+          SYMBOL="${{ github.event.inputs.symbol }}"
+          CURRENCY="${{ github.event.inputs.currency }}"
+          QUANTITY="${{ github.event.inputs.quantity }}"
+          AVG_COST="${{ github.event.inputs.avg_cost }}"
+          NOTE="${{ github.event.inputs.note }}"
+
+          if [ "$ACTION" = "add_holding" ]; then
+            mysql -h "$DB_HOST" -P "${DB_PORT:-3306}" -u "$DB_USER" -p"$DB_PASS" --ssl-mode=REQUIRED "$DB_NAME" \
+              -e "CALL sp_add_holding('${SYMBOL}', '${CURRENCY}', ${QUANTITY}+0, ${AVG_COST}+0);"
+          elif [ "$ACTION" = "add_watch" ]; then
+            # Escape single quotes in note
+            NOTE_ESCAPED=$(printf "%s" "$NOTE" | sed "s/'/''/g")
+            mysql -h "$DB_HOST" -P "${DB_PORT:-3306}" -u "$DB_USER" -p"$DB_PASS" --ssl-mode=REQUIRED "$DB_NAME" \
+              -e "CALL sp_add_watch('${SYMBOL}', '${CURRENCY}', '${NOTE_ESCAPED}');"
+          else
+            echo "Unknown action: $ACTION"; exit 1
+          fi
+
+      - name: Show current holdings & watchlist (quick feedback)
+        run: |
+          mysql -h "$DB_HOST" -P "${DB_PORT:-3306}" -u "$DB_USER" -p"$DB_PASS" --ssl-mode=REQUIRED "$DB_NAME" -e "
+            SELECT t.symbol, h.quantity, h.avg_cost FROM holdings h JOIN tickers t ON t.id=h.ticker_id ORDER BY t.symbol;
+            SELECT t.symbol, w.active, w.note FROM watchlist w JOIN tickers t ON t.id=w.ticker_id ORDER BY t.symbol;"

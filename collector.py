@@ -40,8 +40,13 @@ def main():
 
     # read holdings from DB
     cur.execute("""
-      SELECT t.id, t.symbol
-      FROM holdings h JOIN tickers t ON t.id = h.ticker_id
+        SELECT t.id, t.symbol
+        FROM tickers t
+        JOIN holdings h ON h.ticker_id = t.id
+        UNION
+        SELECT t.id, t.symbol
+        FROM tickers t
+        JOIN watchlist w ON w.ticker_id = t.id AND w.active = 1;
     """)
     rows = cur.fetchall()
     if not rows:
