@@ -1,4 +1,4 @@
-name: Portfolio Admin
+name: Admin
 
 on:
   workflow_dispatch:
@@ -6,32 +6,32 @@ on:
       action:
         description: What do you want to do?
         type: choice
-        options: [buy, sell, add_watch, deactivate_watch]
+        options: [buy, add_watch]
         required: true
       symbol:
         description: Ticker symbol (e.g., AMD, RR.L, XESC.DE)
         required: true
-      currency:
-        description: Currency (buy/add_watch only; e.g., USD, EUR, GBX)
-        required: false
-        default: USD
       quantity:
-        description: Quantity (buy/sell only)
+        description: Quantity (only for buy; leave blank to require autofill fail)
         required: false
-        default: "0"
+        default: ""
       price:
-        description: Price per share (buy only)
+        description: Price per share (buy only; leave blank to use current price)
         required: false
-        default: "0"
+        default: ""
+      currency:
+        description: Currency code (leave blank to fetch via yfinance)
+        required: false
+        default: ""
       note:
-        description: Note (add_watch only)
+        description: Note (leave blank to use yfinance longName)
         required: false
         default: ""
 
 jobs:
-  run:
+  admin:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     env:
       DB_HOST: ${{ secrets.DB_HOST }}
       DB_PORT: ${{ secrets.DB_PORT }}
@@ -39,50 +39,142 @@ jobs:
       DB_PASS: ${{ secrets.DB_PASS }}
       DB_NAME: ${{ secrets.DB_NAME }}
     steps:
-      - name: Install MySQL client
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y mysql-client
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-      - name: Execute action
+      - name: Install deps
         run: |
-          set -euo pipefail
-          ACTION="${{ github.event.inputs.action }}"
-          SYMBOL="${{ github.event.inputs.symbol }}"
-          CURRENCY="${{ github.event.inputs.currency }}"
-          QTY="${{ github.event.inputs.quantity }}"
-          PRICE="${{ github.event.inputs.price }}"
-          NOTE="${{ github.event.inputs.note }}"
-          NOTE_ESCAPED=$(printf "%s" "$NOTE" | sed "s/'/''/g")
+          python -m pip install --upgrade pip
+          pip install yfinance pymysql
 
-          case "$ACTION" in
-            buy)
-              mysql -h "$DB_HOST" -P "${DB_PORT:-3306}" -u "$DB_USER" -p"$DB_PASS" --ssl-mode=REQUIRED "$DB_NAME" \
-                -e "CALL sp_buy('${SYMBOL}', '${CURRENCY}', ${QTY}+0, ${PRICE}+0);"
-              ;;
-            sell)
-              mysql -h "$DB_HOST" -P "${DB_PORT:-3306}" -u "$DB_USER" -p"$DB_PASS" --ssl-mode=REQUIRED "$DB_NAME" \
-                -e "CALL sp_sell('${SYMBOL}', ${QTY}+0, ${PRICE}+0);"
-              ;;
-            add_watch)
-              mysql -h "$DB_HOST" -P "${DB_PORT:-3306}" -u "$DB_USER" -p"$DB_PASS" --ssl-mode=REQUIRED "$DB_NAME" \
-                -e "CALL sp_add_watch('${SYMBOL}', '${CURRENCY}', '${NOTE_ESCAPED}');"
-              ;;
-            deactivate_watch)
-              mysql -h "$DB_HOST" -P "${DB_PORT:-3306}" -u "$DB_USER" -p"$DB_PASS" --ssl-mode=REQUIRED "$DB_NAME" \
-                -e "CALL sp_deactivate_watch('${SYMBOL}');"
-              ;;
-            *)
-              echo "Unknown action: $ACTION"; exit 1;;
-          esac
-
-      - name: Show current holdings & watchlist (feedback)
+      - name: Resolve missing fields via yfinance and apply action
+        env:
+          ACTION: ${{ github.event.inputs.action }}
+          SYMBOL: ${{ github.event.inputs.symbol }}
+          QTY_IN: ${{ github.event.inputs.quantity }}
+          PRICE_IN: ${{ github.event.inputs.price }}
+          CURR_IN: ${{ github.event.inputs.currency }}
+          NOTE_IN: ${{ github.event.inputs.note }}
         run: |
+          python - <<'PY'
+          import os, sys, decimal, pymysql, yfinance as yf
+
+          # Inputs
+          action   = os.getenv("ACTION").strip().lower()
+          symbol   = os.getenv("SYMBOL").strip()
+          qty_in   = os.getenv("QTY_IN").strip()
+          price_in = os.getenv("PRICE_IN").strip()
+          curr_in  = os.getenv("CURR_IN").strip()
+          note_in  = os.getenv("NOTE_IN").strip()
+
+          # Fetch from yfinance for autofill
+          tk = yf.Ticker(symbol)
+
+          # Current price robust fetch
+          last_price = None
+          try:
+            fi = getattr(tk, "fast_info", None) or {}
+            last_price = getattr(fi, "last_price", None) or fi.get("lastPrice")
+          except Exception:
+            pass
+          if last_price is None:
+            try:
+              hist = tk.history(period="1d", interval="1d")
+              if not hist.empty:
+                last_price = float(hist["Close"].dropna().iloc[-1])
+            except Exception:
+              pass
+          if last_price is None:
+            print(f"::error::Could not resolve current price for {symbol}")
+            sys.exit(1)
+
+          # Currency
+          currency = curr_in or None
+          if not currency:
+            currency = (getattr(tk, "fast_info", {}) or {}).get("currency")
+            if not currency:
+              try:
+                info = tk.get_info()  # falls back to .info if needed
+                currency = info.get("currency")
+              except Exception:
+                currency = None
+          if not currency:
+            print(f"::warning::Currency not found for {symbol}, defaulting to USD")
+            currency = "USD"
+
+          # Note (longName)
+          note = note_in or None
+          if not note:
+            long_name = None
+            try:
+              info = tk.get_info()
+              long_name = info.get("longName") or info.get("shortName")
+            except Exception:
+              long_name = None
+            note = long_name or symbol
+
+          # Quantity & Price resolution for buy
+          def to_decimal_or_none(s):
+            try:
+              return decimal.Decimal(s)
+            except Exception:
+              return None
+
+          qty  = to_decimal_or_none(qty_in) if qty_in else None
+          price= to_decimal_or_none(price_in) if price_in else None
+          if price is None:
+            price = decimal.Decimal(str(last_price))
+
+          # Connect DB
+          cn = pymysql.connect(
+            host=os.getenv("DB_HOST"),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASS"),
+            database=os.getenv("DB_NAME"),
+            port=int(os.getenv("DB_PORT") or "3306"),
+            autocommit=True,
+            connect_timeout=10,
+          )
+          cur = cn.cursor()
+
+          if action == "buy":
+            if qty is None or qty <= 0:
+              print("::error::Quantity is required and must be > 0 for buy")
+              sys.exit(1)
+            # CALL sp_buy(symbol, currency, qty, price)
+            cur.execute("CALL sp_buy(%s,%s,%s,%s)", (symbol, currency, str(qty), str(price)))
+            print(f"Bought/updated holding: {symbol} qty={qty} price={price} currency={currency}")
+
+          elif action == "add_watch":
+            # CALL sp_add_watch(symbol, currency, note)
+            cur.execute("CALL sp_add_watch(%s,%s,%s)", (symbol, currency, note))
+            print(f"Added/updated watchlist: {symbol} currency={currency} note={note!r}")
+
+          else:
+            print(f"::error::Unsupported action: {action}")
+            sys.exit(1)
+
+          # Feedback: show current row(s)
+          if action == "buy":
+            cur.execute("""
+              SELECT t.symbol, t.currency, h.quantity, h.avg_cost
+              FROM holdings h JOIN tickers t ON t.id=h.ticker_id
+              WHERE t.symbol=%s
+            """, (symbol,))
+            print("Holdings ->", cur.fetchall())
+          else:
+            cur.execute("""
+              SELECT t.symbol, t.currency, w.active, w.note
+              FROM watchlist w JOIN tickers t ON t.id=w.ticker_id
+              WHERE t.symbol=%s
+            """, (symbol,))
+            print("Watchlist ->", cur.fetchall())
+          PY
+
+      - name: Show summary tables
+        run: |
+          sudo apt-get update && sudo apt-get install -y mysql-client
           mysql -h "$DB_HOST" -P "${DB_PORT:-3306}" -u "$DB_USER" -p"$DB_PASS" --ssl-mode=REQUIRED "$DB_NAME" -e "
-            SELECT t.symbol, h.quantity, h.avg_cost
-            FROM holdings h JOIN tickers t ON t.id=h.ticker_id
-            ORDER BY t.symbol;
-            SELECT t.symbol, w.active, w.note
-            FROM watchlist w JOIN tickers t ON t.id=w.ticker_id
-            WHERE w.active=1
-            ORDER BY t.symbol;"
+            SELECT t.symbol, h.quantity, h.avg_cost FROM holdings h JOIN tickers t ON t.id=h.ticker_id ORDER BY t.symbol;
+            SELECT t.symbol, w.active, w.note FROM watchlist w JOIN tickers t ON t.id=w.ticker_id WHERE w.active=1 ORDER BY t.symbol;"
