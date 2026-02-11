@@ -158,6 +158,71 @@ jobs:
           )
           cur = cn.cursor()
 
+
+          def ensure_single_holding_row_for_symbol(symbol: str):
+            """
+            If holdings has multiple rows for the same ticker_id, merge them into one row:
+            - quantity = SUM(quantity)
+            - avg_cost = weighted average by quantity
+            - note = keep the latest non-null note (best effort)
+            """
+            # find ticker_id
+            cur.execute("SELECT id FROM tickers WHERE symbol=%s", (symbol,))
+            r = cur.fetchone()
+            if not r:
+              return
+            ticker_id = r[0]
+
+            # count duplicates
+            cur.execute("SELECT COUNT(*) FROM holdings WHERE ticker_id=%s", (ticker_id,))
+            c = int(cur.fetchone()[0])
+            if c <= 1:
+              return
+
+            print(f"::warning::Detected {c} holdings rows for {symbol}. Merging into one position.")
+
+            # compute merged position
+            cur.execute("""
+              SELECT
+                SUM(quantity) AS qty,
+                SUM(avg_cost * quantity) / NULLIF(SUM(quantity), 0) AS wavg,
+                MAX(note) AS note
+              FROM holdings
+              WHERE ticker_id=%s
+            """, (ticker_id,))
+            qty, wavg, note = cur.fetchone()
+
+            # replace rows
+            cn.begin()
+            cur.execute("DELETE FROM holdings WHERE ticker_id=%s", (ticker_id,))
+            cur.execute(
+              "INSERT INTO holdings (ticker_id, quantity, avg_cost, note) VALUES (%s,%s,%s,%s)",
+              (ticker_id, str(qty), str(wavg), note)
+            )
+            cn.commit()
+
+          def ensure_holdings_unique_key():
+            """
+            Ensure UNIQUE KEY uq_hold_ticker (ticker_id) exists.
+            If it already exists, do nothing.
+            """
+            cur.execute("""
+              SELECT COUNT(*)
+              FROM information_schema.statistics
+              WHERE table_schema = DATABASE()
+                AND table_name = 'holdings'
+                AND index_name = 'uq_hold_ticker'
+            """)
+            exists = int(cur.fetchone()[0]) > 0
+            if exists:
+              return
+
+            print("::warning::Creating missing UNIQUE KEY uq_hold_ticker on holdings(ticker_id)")
+            # If duplicates still exist, this will fail; that's why we merge first (for the symbol being acted on).
+            cur.execute("ALTER TABLE holdings ADD UNIQUE KEY uq_hold_ticker (ticker_id)")
+
+
+
           if action == "buy":
             if qty is None or qty <= 0:
               die("quantity is required and must be > 0 for buy")
