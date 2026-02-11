@@ -1,4 +1,4 @@
-name: Admin
+name: Portfolio Admin (smart autofill)
 
 on:
   workflow_dispatch:
@@ -6,25 +6,25 @@ on:
       action:
         description: What do you want to do?
         type: choice
-        options: [buy, add_watch]
+        options: [buy, sell, add_watch, deactivate_watch]
         required: true
       symbol:
-        description: Ticker symbol (e.g., AMD, RR.L, XESC.DE)
+        description: Ticker (e.g., AMD, RR.L, XESC.DE)
         required: true
       quantity:
-        description: Quantity (only for buy; leave blank to require autofill fail)
+        description: Quantity (buy/sell only; blank for others)
         required: false
         default: ""
       price:
-        description: Price per share (buy only; leave blank to use current price)
+        description: Price/share (buy only; blank = use current price)
         required: false
         default: ""
       currency:
-        description: Currency code (leave blank to fetch via yfinance)
+        description: Currency (blank = yfinance)
         required: false
         default: ""
       note:
-        description: Note (leave blank to use yfinance longName)
+        description: Optional note (never auto-filled)
         required: false
         default: ""
 
@@ -38,6 +38,7 @@ jobs:
       DB_USER: ${{ secrets.DB_USER }}
       DB_PASS: ${{ secrets.DB_PASS }}
       DB_NAME: ${{ secrets.DB_NAME }}
+
     steps:
       - uses: actions/setup-python@v5
         with:
@@ -48,7 +49,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install yfinance pymysql
 
-      - name: Resolve missing fields via yfinance and apply action
+      - name: Execute admin action (with yfinance autofill)
         env:
           ACTION: ${{ github.event.inputs.action }}
           SYMBOL: ${{ github.event.inputs.symbol }}
@@ -58,75 +59,94 @@ jobs:
           NOTE_IN: ${{ github.event.inputs.note }}
         run: |
           python - <<'PY'
-          import os, sys, decimal, pymysql, yfinance as yf
+          import os, sys, decimal, pymysql
+          import yfinance as yf
 
-          # Inputs
-          action   = os.getenv("ACTION").strip().lower()
-          symbol   = os.getenv("SYMBOL").strip()
-          qty_in   = os.getenv("QTY_IN").strip()
-          price_in = os.getenv("PRICE_IN").strip()
-          curr_in  = os.getenv("CURR_IN").strip()
-          note_in  = os.getenv("NOTE_IN").strip()
-
-          # Fetch from yfinance for autofill
-          tk = yf.Ticker(symbol)
-
-          # Current price robust fetch
-          last_price = None
-          try:
-            fi = getattr(tk, "fast_info", None) or {}
-            last_price = getattr(fi, "last_price", None) or fi.get("lastPrice")
-          except Exception:
-            pass
-          if last_price is None:
-            try:
-              hist = tk.history(period="1d", interval="1d")
-              if not hist.empty:
-                last_price = float(hist["Close"].dropna().iloc[-1])
-            except Exception:
-              pass
-          if last_price is None:
-            print(f"::error::Could not resolve current price for {symbol}")
+          def die(msg):
+            print(f"::error::{msg}")
             sys.exit(1)
 
-          # Currency
+          action   = (os.getenv("ACTION") or "").strip().lower()
+          symbol   = (os.getenv("SYMBOL") or "").strip()
+          qty_in   = (os.getenv("QTY_IN") or "").strip()
+          price_in = (os.getenv("PRICE_IN") or "").strip()
+          curr_in  = (os.getenv("CURR_IN") or "").strip()
+          note_in  = (os.getenv("NOTE_IN") or "").strip()
+
+          if not symbol:
+            die("symbol is required")
+
+          # yfinance lookups (only for fields that are blank)
+          tk = yf.Ticker(symbol)
+
+          # currency
           currency = curr_in or None
           if not currency:
-            currency = (getattr(tk, "fast_info", {}) or {}).get("currency")
+            fi = getattr(tk, "fast_info", None)
+            currency = None
+            if isinstance(fi, dict):
+              currency = fi.get("currency")
+            elif fi is not None:
+              currency = getattr(fi, "currency", None)
             if not currency:
               try:
-                info = tk.get_info()  # falls back to .info if needed
+                info = tk.get_info()
                 currency = info.get("currency")
               except Exception:
                 currency = None
-          if not currency:
-            print(f"::warning::Currency not found for {symbol}, defaulting to USD")
-            currency = "USD"
+            if not currency:
+              currency = "USD"  # sensible fallback
+              print(f"::warning::currency not found for {symbol}, defaulting to USD")
 
-          # Note (longName)
-          note = note_in or None
-          if not note:
-            long_name = None
+          # current price (for buy if price blank)
+          def resolve_last_price():
+            # Try fast_info
+            fi = getattr(tk, "fast_info", None)
+            if isinstance(fi, dict):
+              p = fi.get("lastPrice") or fi.get("last_price") or fi.get("last_traded_price")
+              if p: return float(p)
+            elif fi is not None:
+              p = getattr(fi, "last_price", None)
+              if p: return float(p)
+            # Fallback: history
             try:
-              info = tk.get_info()
-              long_name = info.get("longName") or info.get("shortName")
+              hist = tk.history(period="1d", interval="1d")
+              if not hist.empty:
+                return float(hist["Close"].dropna().iloc[-1])
             except Exception:
-              long_name = None
-            note = long_name or symbol
+              pass
+            return None
 
-          # Quantity & Price resolution for buy
-          def to_decimal_or_none(s):
+          last_price = None
+          if not price_in:
+            last_price = resolve_last_price()
+            if last_price is None and action == "buy":
+              die(f"could not resolve current price for {symbol}")
+          else:
+            try:
+              last_price = float(price_in)
+            except Exception:
+              die("price must be a number if provided")
+
+          # longName -> tickers.name (canonical); NEVER used as note
+          long_name = None
+          try:
+            info = tk.get_info()
+            long_name = info.get("longName") or info.get("shortName")
+          except Exception:
+            pass
+
+          # normalize decimals
+          def dec_or_none(s):
             try:
               return decimal.Decimal(s)
             except Exception:
               return None
 
-          qty  = to_decimal_or_none(qty_in) if qty_in else None
-          price= to_decimal_or_none(price_in) if price_in else None
-          if price is None:
-            price = decimal.Decimal(str(last_price))
+          qty = dec_or_none(qty_in) if qty_in else None
+          price_dec = decimal.Decimal(str(last_price)) if last_price is not None else None
 
-          # Connect DB
+          # DB connect
           cn = pymysql.connect(
             host=os.getenv("DB_HOST"),
             user=os.getenv("DB_USER"),
@@ -140,41 +160,59 @@ jobs:
 
           if action == "buy":
             if qty is None or qty <= 0:
-              print("::error::Quantity is required and must be > 0 for buy")
-              sys.exit(1)
-            # CALL sp_buy(symbol, currency, qty, price)
-            cur.execute("CALL sp_buy(%s,%s,%s,%s)", (symbol, currency, str(qty), str(price)))
-            print(f"Bought/updated holding: {symbol} qty={qty} price={price} currency={currency}")
+              die("quantity is required and must be > 0 for buy")
+            if price_dec is None:
+              die("price could not be resolved for buy action")
+            # CALL sp_buy(symbol, currency, qty, price, name, note)
+            cur.execute(
+              "CALL sp_buy(%s,%s,%s,%s,%s,%s)",
+              (symbol, currency, str(qty), str(price_dec), long_name, (note_in or None))
+            )
+            print(f"Buy OK -> {symbol} qty={qty} price={price_dec} cc={currency} name={long_name!r} note={(note_in or None)!r}")
+
+          elif action == "sell":
+            if qty is None or qty <= 0:
+              die("quantity is required and must be > 0 for sell")
+            # CALL sp_sell(symbol, qty, note)
+            cur.execute("CALL sp_sell(%s,%s,%s)", (symbol, str(qty), (note_in or None)))
+            print(f"Sell OK -> {symbol} qty={qty} note={(note_in or None)!r}")
 
           elif action == "add_watch":
-            # CALL sp_add_watch(symbol, currency, note)
-            cur.execute("CALL sp_add_watch(%s,%s,%s)", (symbol, currency, note))
-            print(f"Added/updated watchlist: {symbol} currency={currency} note={note!r}")
+              # long_name for tickers.name, never auto-fill notes
+              long_name = None
+              try:
+                  info = tk.get_info()
+                  long_name = info.get("longName") or info.get("shortName")
+              except Exception:
+                  pass
+
+              # CALL sp_add_watch(symbol, currency, note, name)
+              cur.execute(
+                  "CALL sp_add_watch(%s,%s,%s,%s)",
+                  (symbol, currency, (note_in or None), long_name)
+              )
+              print(f"Watch OK -> {symbol} cc={currency} name={long_name!r} note={(note_in or None)!r}")
 
           else:
-            print(f"::error::Unsupported action: {action}")
-            sys.exit(1)
+            die(f"unsupported action: {action}")
 
-          # Feedback: show current row(s)
-          if action == "buy":
-            cur.execute("""
-              SELECT t.symbol, t.currency, h.quantity, h.avg_cost
-              FROM holdings h JOIN tickers t ON t.id=h.ticker_id
-              WHERE t.symbol=%s
-            """, (symbol,))
-            print("Holdings ->", cur.fetchall())
-          else:
-            cur.execute("""
-              SELECT t.symbol, t.currency, w.active, w.note
-              FROM watchlist w JOIN tickers t ON t.id=w.ticker_id
-              WHERE t.symbol=%s
-            """, (symbol,))
-            print("Watchlist ->", cur.fetchall())
+          # Feedback
+          cur.execute("""
+            SELECT t.symbol, t.currency, t.name, h.quantity, h.avg_cost, h.note
+            FROM tickers t
+            LEFT JOIN holdings h ON h.ticker_id = t.id
+            WHERE t.symbol=%s
+          """, (symbol,))
+          print("Row ->", cur.fetchall())
           PY
 
-      - name: Show summary tables
+      - name: Quick summary tables (optional)
         run: |
           sudo apt-get update && sudo apt-get install -y mysql-client
           mysql -h "$DB_HOST" -P "${DB_PORT:-3306}" -u "$DB_USER" -p"$DB_PASS" --ssl-mode=REQUIRED "$DB_NAME" -e "
-            SELECT t.symbol, h.quantity, h.avg_cost FROM holdings h JOIN tickers t ON t.id=h.ticker_id ORDER BY t.symbol;
-            SELECT t.symbol, w.active, w.note FROM watchlist w JOIN tickers t ON t.id=w.ticker_id WHERE w.active=1 ORDER BY t.symbol;"
+            SELECT t.symbol, t.currency, t.name, h.quantity, h.avg_cost, h.note
+            FROM tickers t LEFT JOIN holdings h ON h.ticker_id=t.id
+            ORDER BY t.symbol;
+            SELECT t.symbol, w.active, w.note
+            FROM watchlist w JOIN tickers t ON t.id=w.ticker_id
+            ORDER BY t.symbol;"
