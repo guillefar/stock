@@ -1,0 +1,2017 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 0,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.4.0-21490573584.patch3",
+      "targets": [
+        {
+          "dataset": "defaultdb",
+          "datasource": {
+            "type": "mysql",
+            "uid": "cfadv004ogglcf"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  UNIX_TIMESTAMP(d.day) AS time_sec,\n  t.symbol              AS metric,\n  ps.price              AS value\nFROM (\n  SELECT\n    DATE(as_of_date) AS day,\n    ticker_id,\n    MAX(as_of_date)  AS last_ts\n  FROM price_snapshots\n  WHERE as_of_date >= $__timeFrom() AND as_of_date <= $__timeTo()\n  GROUP BY ticker_id, DATE(as_of_date)\n) d\nJOIN price_snapshots ps ON ps.ticker_id = d.ticker_id AND ps.as_of_date = d.last_ts\nJOIN holdings h         ON h.ticker_id = ps.ticker_id     -- << filter to holdings\nJOIN tickers  t         ON t.id        = ps.ticker_id\nORDER BY d.day, t.symbol;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Price",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.4.0-21490573584.patch3",
+      "targets": [
+        {
+          "dataset": "defaultdb",
+          "datasource": {
+            "type": "mysql",
+            "uid": "cfadv004ogglcf"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  UNIX_TIMESTAMP(d.day) AS time_sec,\n  t.symbol              AS metric,\n  ps.price              AS value\nFROM (\n  SELECT DATE(as_of_date) AS day, ticker_id, MAX(as_of_date) AS last_ts\n  FROM price_snapshots\n  WHERE as_of_date >= $__timeFrom() AND as_of_date <= $__timeTo()\n  GROUP BY ticker_id, DATE(as_of_date)\n) d\nJOIN watchlist w       ON w.ticker_id = d.ticker_id AND w.active = 1\nJOIN price_snapshots ps ON ps.ticker_id = d.ticker_id AND ps.as_of_date = d.last_ts\nJOIN tickers t          ON t.id        = d.ticker_id\nORDER BY d.day, t.symbol;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Price Watchlist",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.4.0-21490573584.patch3",
+      "targets": [
+        {
+          "dataset": "defaultdb",
+          "datasource": {
+            "type": "mysql",
+            "uid": "cfadv004ogglcf"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  UNIX_TIMESTAMP(d.day) AS time_sec,\n  t.symbol              AS metric,\n  100.0 * ((ps.price - h.avg_cost) / NULLIF(h.avg_cost, 0)) AS value\nFROM (\n  SELECT DATE(as_of_date) AS day, ticker_id, MAX(as_of_date) AS last_ts\n  FROM price_snapshots\n  WHERE as_of_date >= $__timeFrom() AND as_of_date <= $__timeTo()\n  GROUP BY ticker_id, DATE(as_of_date)\n) d\nJOIN holdings h         ON h.ticker_id = d.ticker_id\nJOIN price_snapshots ps ON ps.ticker_id = d.ticker_id AND ps.as_of_date = d.last_ts\nJOIN tickers t          ON t.id        = d.ticker_id\nORDER BY d.day, t.symbol;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Percentage Gains Holdings",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "axisSoftMin": 0,
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.4.0-21490573584.patch3",
+      "targets": [
+        {
+          "dataset": "defaultdb",
+          "datasource": {
+            "type": "mysql",
+            "uid": "cfadv004ogglcf"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  UNIX_TIMESTAMP(d.day) AS time_sec,\n  t.symbol              AS metric,\n  100.0 * ((ps.price - bp.base_price) / NULLIF(bp.base_price, 0)) AS value\nFROM (\n  -- daily roll-up: last snapshot each day per ticker\n  SELECT DATE(as_of_date) AS day, ticker_id, MAX(as_of_date) AS last_ts\n  FROM price_snapshots\n  WHERE as_of_date >= $__timeFrom() AND as_of_date <= $__timeTo()\n  GROUP BY ticker_id, DATE(as_of_date)\n) d\nJOIN watchlist w         ON w.ticker_id = d.ticker_id AND w.active = 1\nJOIN tickers   t         ON t.id        = d.ticker_id\nJOIN price_snapshots ps  ON ps.ticker_id = d.ticker_id AND ps.as_of_date = d.last_ts\nJOIN (\n  -- per-ticker baseline = price on the first day in the range (using that day’s last snapshot)\n  SELECT b.ticker_id, ps1.price AS base_price\n  FROM (\n    SELECT ticker_id, MIN(day) AS first_day\n    FROM (\n      SELECT DATE(as_of_date) AS day, ticker_id\n      FROM price_snapshots\n      WHERE as_of_date >= $__timeFrom() AND as_of_date <= $__timeTo()\n      GROUP BY ticker_id, DATE(as_of_date)\n    ) dd\n    GROUP BY ticker_id\n  ) b\n  JOIN (\n    SELECT DATE(as_of_date) AS day, ticker_id, MAX(as_of_date) AS last_ts\n    FROM price_snapshots\n    WHERE as_of_date >= $__timeFrom() AND as_of_date <= $__timeTo()\n    GROUP BY ticker_id, DATE(as_of_date)\n  ) d1 ON d1.ticker_id = b.ticker_id AND d1.day = b.first_day\n  JOIN price_snapshots ps1 ON ps1.ticker_id = d1.ticker_id AND ps1.as_of_date = d1.last_ts\n) bp ON bp.ticker_id = d.ticker_id\nORDER BY d.day, t.symbol;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Percentage Gains Watching",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "axisSoftMin": 0,
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.4.0-21490573584.patch3",
+      "targets": [
+        {
+          "dataset": "defaultdb",
+          "datasource": {
+            "type": "mysql",
+            "uid": "cfadv004ogglcf"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  UNIX_TIMESTAMP(d.day) AS time_sec,\n  t.symbol              AS metric,\n  h.quantity * (ps.price - pb.base_price) AS value\nFROM (\n  SELECT DATE(as_of_date) AS day, ticker_id, MAX(as_of_date) AS last_ts\n  FROM price_snapshots\n  WHERE as_of_date >= $__timeFrom() AND as_of_date <= $__timeTo()\n  GROUP BY ticker_id, DATE(as_of_date)\n) d\nJOIN holdings h          ON h.ticker_id = d.ticker_id\nJOIN tickers  t          ON t.id        = d.ticker_id\nJOIN price_snapshots ps  ON ps.ticker_id = d.ticker_id AND ps.as_of_date = d.last_ts\nJOIN (\n  SELECT b.ticker_id, p.price AS base_price\n  FROM (\n    SELECT ticker_id, MIN(as_of_date) AS base_ts\n    FROM price_snapshots\n    WHERE as_of_date >= $__timeFrom() AND as_of_date <= $__timeTo()\n    GROUP BY ticker_id\n  ) b\n  JOIN price_snapshots p ON p.ticker_id = b.ticker_id AND p.as_of_date = b.base_ts\n) pb ON pb.ticker_id = d.ticker_id\nORDER BY d.day, t.symbol;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              },
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          },
+          "table": "price_snapshots"
+        }
+      ],
+      "title": "Gains Holding in Time Range",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "axisSoftMin": 0,
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 10,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.4.0-21490573584.patch3",
+      "targets": [
+        {
+          "dataset": "defaultdb",
+          "datasource": {
+            "type": "mysql",
+            "uid": "cfadv004ogglcf"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  UNIX_TIMESTAMP(d.day) AS time_sec,\n  t.symbol              AS metric,\n  (ps.price - pb.base_price) AS value\nFROM (\n  -- last snapshot each day per ticker within range\n  SELECT DATE(as_of_date) AS day, ticker_id, MAX(as_of_date) AS last_ts\n  FROM price_snapshots\n  WHERE as_of_date >= $__timeFrom() AND as_of_date <= $__timeTo()\n  GROUP BY ticker_id, DATE(as_of_date)\n) d\nJOIN watchlist w         ON w.ticker_id = d.ticker_id AND w.active = 1\nJOIN tickers   t         ON t.id        = d.ticker_id\nJOIN price_snapshots ps  ON ps.ticker_id = d.ticker_id AND ps.as_of_date = d.last_ts\nJOIN (\n  -- baseline = FIRST snapshot inside the time range per ticker\n  SELECT b.ticker_id, p.price AS base_price\n  FROM (\n    SELECT ticker_id, MIN(as_of_date) AS base_ts\n    FROM price_snapshots\n    WHERE as_of_date >= $__timeFrom() AND as_of_date <= $__timeTo()\n    GROUP BY ticker_id\n  ) b\n  JOIN price_snapshots p ON p.ticker_id = b.ticker_id AND p.as_of_date = b.base_ts\n) pb ON pb.ticker_id = d.ticker_id\nORDER BY d.day, t.symbol;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              },
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          },
+          "table": "price_snapshots"
+        }
+      ],
+      "title": "Gains Watchlist in Time Range",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.4.0-21490573584.patch3",
+      "targets": [
+        {
+          "dataset": "defaultdb",
+          "datasource": {
+            "type": "mysql",
+            "uid": "cfadv004ogglcf"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  UNIX_TIMESTAMP(d.day) AS time_sec,\n  t.symbol              AS metric,\n  100.0 * ( (ps.price - pb.base_price) / NULLIF(pb.base_price, 0) ) AS value\nFROM (\n  SELECT DATE(as_of_date) AS day, ticker_id, MAX(as_of_date) AS last_ts\n  FROM price_snapshots\n  WHERE as_of_date >= $__timeFrom() AND as_of_date <= $__timeTo()\n  GROUP BY ticker_id, DATE(as_of_date)\n) d\nJOIN holdings h          ON h.ticker_id = d.ticker_id\nJOIN tickers  t          ON t.id        = d.ticker_id\nJOIN price_snapshots ps  ON ps.ticker_id = d.ticker_id AND ps.as_of_date = d.last_ts\nJOIN (\n  SELECT b.ticker_id, p.price AS base_price\n  FROM (\n    SELECT ticker_id, MIN(as_of_date) AS base_ts\n    FROM price_snapshots\n    WHERE as_of_date >= $__timeFrom() AND as_of_date <= $__timeTo()\n    GROUP BY ticker_id\n  ) b\n  JOIN price_snapshots p ON p.ticker_id = b.ticker_id AND p.as_of_date = b.base_ts\n) pb ON pb.ticker_id = d.ticker_id\nORDER BY d.day, t.symbol;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Percentage Gains Holdings in Time Range",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "axisSoftMin": 0,
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.4.0-21490573584.patch3",
+      "targets": [
+        {
+          "dataset": "defaultdb",
+          "datasource": {
+            "type": "mysql",
+            "uid": "cfadv004ogglcf"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  UNIX_TIMESTAMP(d.day) AS time_sec,\n  t.symbol              AS metric,\n  100.0 * ( (ps.price - pb.base_price) / NULLIF(pb.base_price, 0) ) AS value\nFROM (\n  SELECT DATE(as_of_date) AS day, ticker_id, MAX(as_of_date) AS last_ts\n  FROM price_snapshots\n  WHERE as_of_date >= $__timeFrom() AND as_of_date <= $__timeTo()\n  GROUP BY ticker_id, DATE(as_of_date)\n) d\nJOIN watchlist w         ON w.ticker_id = d.ticker_id AND w.active = 1\nJOIN tickers   t         ON t.id        = d.ticker_id\nJOIN price_snapshots ps  ON ps.ticker_id = d.ticker_id AND ps.as_of_date = d.last_ts\nJOIN (\n  SELECT b.ticker_id, p.price AS base_price\n  FROM (\n    SELECT ticker_id, MIN(as_of_date) AS base_ts\n    FROM price_snapshots\n    WHERE as_of_date >= $__timeFrom() AND as_of_date <= $__timeTo()\n    GROUP BY ticker_id\n  ) b\n  JOIN price_snapshots p ON p.ticker_id = b.ticker_id AND p.as_of_date = b.base_ts\n) pb ON pb.ticker_id = d.ticker_id\nORDER BY d.day, t.symbol;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Percentage Gains Watching in Time Range",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "axisSoftMin": 0,
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.4.0-21490573584.patch3",
+      "targets": [
+        {
+          "dataset": "defaultdb",
+          "datasource": {
+            "type": "mysql",
+            "uid": "cfadv004ogglcf"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  UNIX_TIMESTAMP(d.day)                   AS time_sec,\n  t.symbol                                AS metric,\n  h.quantity * (ps.price - h.avg_cost)    AS value\nFROM (\n  SELECT\n    DATE(as_of_date) AS day,\n    ticker_id,\n    MAX(as_of_date)  AS last_ts\n  FROM price_snapshots\n  WHERE as_of_date >= $__timeFrom() AND as_of_date <= $__timeTo()\n  GROUP BY ticker_id, DATE(as_of_date)\n) d\nJOIN price_snapshots ps ON ps.ticker_id = d.ticker_id AND ps.as_of_date = d.last_ts\nJOIN holdings h         ON h.ticker_id = ps.ticker_id\nJOIN tickers  t         ON t.id        = ps.ticker_id\nORDER BY d.day, t.symbol;",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              },
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          },
+          "table": "price_snapshots"
+        }
+      ],
+      "title": "Gains",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "axisSoftMin": 0,
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "id": 16,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.4.0-21490573584.patch3",
+      "targets": [
+        {
+          "dataset": "defaultdb",
+          "datasource": {
+            "type": "mysql",
+            "uid": "cfadv004ogglcf"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  UNIX_TIMESTAMP(d.day) AS time_sec,\n  t.symbol              AS metric,\n  ps.price - pb.base_price AS value\nFROM (\n  -- last snapshot per day (still constrained by dashboard time window for display)\n  SELECT DATE(as_of_date) AS day, ticker_id, MAX(as_of_date) AS last_ts\n  FROM price_snapshots\n  WHERE $__timeFilter(as_of_date)   -- optional: keeps the plotted range fast\n  GROUP BY ticker_id, DATE(as_of_date)\n) d\nJOIN watchlist w        ON w.ticker_id = d.ticker_id AND w.active = 1\nJOIN tickers   t        ON t.id        = d.ticker_id\nJOIN price_snapshots ps ON ps.ticker_id = d.ticker_id AND ps.as_of_date = d.last_ts\nJOIN (\n  -- all-time baseline: very first snapshot ever for each ticker\n  SELECT b.ticker_id, p.price AS base_price\n  FROM (\n    SELECT ticker_id, MIN(as_of_date) AS base_ts\n    FROM price_snapshots\n    GROUP BY ticker_id\n  ) b\n  JOIN price_snapshots p\n    ON p.ticker_id = b.ticker_id AND p.as_of_date = b.base_ts\n) pb ON pb.ticker_id = d.ticker_id\nORDER BY d.day, t.symbol;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              },
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          },
+          "table": "price_snapshots"
+        }
+      ],
+      "title": "Gains Watchlist",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineStyle": {
+              "fill": "solid"
+            },
+            "lineWidth": 5,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": true,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 40
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.4.0-21490573584.patch3",
+      "targets": [
+        {
+          "dataset": "defaultdb",
+          "datasource": {
+            "type": "mysql",
+            "uid": "cfadv004ogglcf"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  UNIX_TIMESTAMP(d.day) AS time_sec,\n  h.quantity * (ps.price - h.avg_cost) AS '$stock gains'\nFROM (\n  SELECT\n    DATE(ps.as_of_date) AS day,\n    MAX(ps.as_of_date)  AS last_ts\n  FROM price_snapshots ps\n  JOIN tickers t ON t.id = ps.ticker_id\n  WHERE t.symbol = '$stock'\n    AND ps.as_of_date >= $__timeFrom() AND ps.as_of_date <= $__timeTo()\n  GROUP BY DATE(ps.as_of_date)\n) d\nJOIN tickers t        ON t.symbol = '$stock'\nJOIN price_snapshots ps ON ps.ticker_id = t.id AND ps.as_of_date = d.last_ts\nJOIN holdings h         ON h.ticker_id = t.id\nORDER BY d.day;",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Gains",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineStyle": {
+              "fill": "solid"
+            },
+            "lineWidth": 5,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": true,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 48
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.4.0-21490573584.patch3",
+      "targets": [
+        {
+          "dataset": "defaultdb",
+          "datasource": {
+            "type": "mysql",
+            "uid": "cfadv004ogglcf"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  UNIX_TIMESTAMP(d.day) AS time_sec,\n  ps.price - pb.base_price AS '$stock gains in time range'\nFROM (\n  SELECT DATE(ps.as_of_date) AS day, MAX(ps.as_of_date) AS last_ts\n  FROM price_snapshots ps\n  JOIN tickers t ON t.id = ps.ticker_id\n  WHERE t.symbol = '$stock'\n    AND ps.as_of_date >= $__timeFrom() AND ps.as_of_date <= $__timeTo()\n  GROUP BY DATE(ps.as_of_date)\n) d\nJOIN tickers t         ON t.symbol = '$stock'\nJOIN price_snapshots ps ON ps.ticker_id = t.id AND ps.as_of_date = d.last_ts\nJOIN (\n  SELECT t.id AS ticker_id, p.price AS base_price\n  FROM tickers t\n  JOIN price_snapshots p ON p.ticker_id = t.id\n  WHERE t.symbol = '$stock'\n    AND p.as_of_date >= $__timeFrom() AND p.as_of_date <= $__timeTo()\n  ORDER BY p.as_of_date ASC\n  LIMIT 1\n) pb ON pb.ticker_id = t.id\nORDER BY d.day;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Gains in Time Range",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 5,
+            "pointSize": 8,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": true,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 56
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.4.0-21490573584.patch3",
+      "targets": [
+        {
+          "dataset": "defaultdb",
+          "datasource": {
+            "type": "mysql",
+            "uid": "cfadv004ogglcf"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  UNIX_TIMESTAMP(d.day) AS time_sec,\n  100.0 * ((ps.price - h.avg_cost) / NULLIF(h.avg_cost, 0)) AS '$stock gains %'\nFROM (\n  SELECT DATE(ps.as_of_date) AS day, MAX(ps.as_of_date) AS last_ts\n  FROM price_snapshots ps\n  JOIN tickers t ON t.id = ps.ticker_id\n  WHERE t.symbol = '$stock'\n    AND ps.as_of_date >= $__timeFrom() AND ps.as_of_date <= $__timeTo()\n  GROUP BY DATE(ps.as_of_date)\n) d\nJOIN tickers t         ON t.symbol = '$stock'\nJOIN holdings h        ON h.ticker_id = t.id\nJOIN price_snapshots ps ON ps.ticker_id = t.id AND ps.as_of_date = d.last_ts\nORDER BY d.day;",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Gains percentage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 5,
+            "pointSize": 8,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": true,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 64
+      },
+      "id": 15,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.4.0-21490573584.patch3",
+      "targets": [
+        {
+          "dataset": "defaultdb",
+          "datasource": {
+            "type": "mysql",
+            "uid": "cfadv004ogglcf"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  UNIX_TIMESTAMP(d.day) AS time_sec,\n  100.0 * ((ps.price - pb.base_price) / NULLIF(pb.base_price, 0)) AS '$stock gains percentage in time range'\nFROM (\n  SELECT DATE(ps.as_of_date) AS day, MAX(ps.as_of_date) AS last_ts\n  FROM price_snapshots ps\n  JOIN tickers t ON t.id = ps.ticker_id\n  WHERE t.symbol = '$stock'\n    AND ps.as_of_date >= $__timeFrom() AND ps.as_of_date <= $__timeTo()\n  GROUP BY DATE(ps.as_of_date)\n) d\nJOIN tickers t          ON t.symbol = '$stock'\nJOIN price_snapshots ps ON ps.ticker_id = t.id AND ps.as_of_date = d.last_ts\nJOIN (\n  SELECT t.id AS ticker_id, p.price AS base_price\n  FROM tickers t\n  JOIN price_snapshots p ON p.ticker_id = t.id\n  WHERE t.symbol = '$stock'\n    AND p.as_of_date >= $__timeFrom() AND p.as_of_date <= $__timeTo()\n  ORDER BY p.as_of_date ASC\n  LIMIT 1\n) pb ON pb.ticker_id = t.id\nORDER BY d.day;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Gains percentage in time range",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 5,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 72
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.4.0-21490573584.patch3",
+      "targets": [
+        {
+          "dataset": "defaultdb",
+          "datasource": {
+            "type": "mysql",
+            "uid": "cfadv004ogglcf"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  CAST(ps.as_of_date AS DATETIME) AS time,   -- ok in SELECT\n  ps.price AS '$stock price'\nFROM price_snapshots ps\nJOIN tickers t ON t.id = ps.ticker_id\nWHERE t.symbol = '$stock'\n  AND $__timeFilter(ps.as_of_date)           -- ← no CAST() here\nORDER BY time;",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "name": "AVG",
+                "parameters": [
+                  {
+                    "name": "price",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              },
+              {
+                "name": "COUNT",
+                "parameters": [
+                  {
+                    "name": "as_of_date",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          },
+          "table": "v_portfolio_daily"
+        }
+      ],
+      "title": "Price",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 80
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.4.0-21490573584.patch3",
+      "targets": [
+        {
+          "dataset": "defaultdb",
+          "datasource": {
+            "type": "mysql",
+            "uid": "cfadv004ogglcf"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH s AS (\n  SELECT\n    ps.ticker_id,\n    ps.as_of_date,\n    ps.price,\n    LAG(ps.price) OVER (PARTITION BY ps.ticker_id ORDER BY ps.as_of_date) AS prev_price\n  FROM price_snapshots ps\n),\npnl AS (\n  SELECT\n    s.as_of_date,\n    h.quantity * (s.price - s.prev_price) AS daily_pnl\n  FROM s\n  JOIN holdings h ON h.ticker_id = s.ticker_id\n)\nSELECT\n  CAST(as_of_date AS DATETIME) AS time,\n  SUM(daily_pnl)               AS portfolio_daily_pnl\nFROM pnl\nWHERE $__timeFilter(as_of_date)\nGROUP BY as_of_date\nORDER BY time;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Current Price",
+      "type": "timeseries"
+    }
+  ],
+  "preload": false,
+  "schemaVersion": 42,
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "text": "holdings",
+          "value": "holdings"
+        },
+        "label": "Stock Status",
+        "name": "status",
+        "options": [],
+        "query": "Holdings : holdings, Watchlist : watchlist",
+        "type": "custom",
+        "valuesFormat": "csv"
+      },
+      {
+        "current": {
+          "text": "LITE",
+          "value": "LITE"
+        },
+        "datasource": {
+          "type": "mysql",
+          "uid": "cfadv004ogglcf"
+        },
+        "definition": "SELECT\n  t.symbol              AS metric\nFROM (\n  SELECT\n    DATE(as_of_date) AS day,\n    ticker_id,\n    MAX(as_of_date)  AS last_ts\n  FROM price_snapshots\n  WHERE as_of_date >= $__timeFrom() AND as_of_date <= $__timeTo()\n  GROUP BY ticker_id, DATE(as_of_date)\n) d\nJOIN price_snapshots ps ON ps.ticker_id = d.ticker_id AND ps.as_of_date = d.last_ts\nJOIN $status s       ON s.ticker_id = ps.ticker_id     -- << filter\nJOIN tickers  t         ON t.id        = ps.ticker_id\nORDER BY d.day, t.symbol;",
+        "description": "",
+        "label": "Stock",
+        "name": "stock",
+        "options": [],
+        "query": "SELECT\n  t.symbol              AS metric\nFROM (\n  SELECT\n    DATE(as_of_date) AS day,\n    ticker_id,\n    MAX(as_of_date)  AS last_ts\n  FROM price_snapshots\n  WHERE as_of_date >= $__timeFrom() AND as_of_date <= $__timeTo()\n  GROUP BY ticker_id, DATE(as_of_date)\n) d\nJOIN price_snapshots ps ON ps.ticker_id = d.ticker_id AND ps.as_of_date = d.last_ts\nJOIN $status s       ON s.ticker_id = ps.ticker_id     -- << filter\nJOIN tickers  t         ON t.id        = ps.ticker_id\nORDER BY d.day, t.symbol;",
+        "refresh": 1,
+        "regex": "",
+        "regexApplyTo": "value",
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "My Stock",
+  "uid": "mazxgkd",
+  "version": 26,
+  "weekStart": ""
+}
