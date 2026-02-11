@@ -178,20 +178,16 @@ jobs:
             print(f"Sell OK -> {symbol} qty={qty} note={(note_in or None)!r}")
 
           elif action == "add_watch":
-              # long_name for tickers.name, never auto-fill notes
-              long_name = None
-              try:
-                  info = tk.get_info()
-                  long_name = info.get("longName") or info.get("shortName")
-              except Exception:
-                  pass
+            # CALL sp_add_watch(symbol, currency, note, name)
+            cur.execute(
+              "CALL sp_add_watch(%s,%s,%s,%s)",
+              (symbol, currency, (note_in or None), long_name)
+            )
+            print(f"Watch OK -> {symbol} cc={currency} name={long_name!r} note={(note_in or None)!r}")
 
-              # CALL sp_add_watch(symbol, currency, note, name)
-              cur.execute(
-                  "CALL sp_add_watch(%s,%s,%s,%s)",
-                  (symbol, currency, (note_in or None), long_name)
-              )
-              print(f"Watch OK -> {symbol} cc={currency} name={long_name!r} note={(note_in or None)!r}")
+          elif action == "deactivate_watch":
+            cur.execute("CALL sp_deactivate_watch(%s)", (symbol,))
+            print(f"Watch deactivated -> {symbol}")
 
           else:
             die(f"unsupported action: {action}")
