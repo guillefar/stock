@@ -14,30 +14,50 @@ DB_PASS = os.getenv("DB_PASS")
 DB_NAME = os.getenv("DB_NAME")
 DB_PORT = env_int("DB_PORT", 3306)
 
+# Timestamp alignment:
+# - Scheduled runs: align to "current hour at SNAP_MINUTE_OFFSET" (default :07 UTC)
+# - Manual runs (workflow_dispatch): use the current minute (nice-to-have)
+SNAP_MINUTE_OFFSET = env_int("SNAP_MINUTE_OFFSET", 7)  # minutes past the hour
+USE_CURRENT_MINUTE_ON_MANUAL = (os.getenv("USE_CURRENT_MINUTE_ON_MANUAL", "1") == "1")
+
 def connect():
     cn = pymysql.connect(
         host=DB_HOST, user=DB_USER, password=DB_PASS,
-        database=DB_NAME, port=DB_PORT, autocommit=False,  # we control commit
+        database=DB_NAME, port=DB_PORT, autocommit=False,
         connect_timeout=10,
     )
     return cn
 
 INSERT_SQL = """
 INSERT INTO price_snapshots (ticker_id, as_of_date, price, price_source)
-VALUES (%s, UTC_TIMESTAMP(), %s, %s)
+VALUES (%s, %s, %s, %s)
 """
 
-def insert_snapshot(cur, ticker_id, price, source="yfinance"):
-    cur.execute(INSERT_SQL, (ticker_id, float(price), source))
+def compute_run_ts(now_utc: dt.datetime) -> dt.datetime:
+    """Return a run timestamp (naive UTC datetime) used for *all* inserts in this run."""
+    event = os.getenv("GITHUB_EVENT_NAME", "").strip().lower()  # schedule | workflow_dispatch | ...
+    if USE_CURRENT_MINUTE_ON_MANUAL and event == "workflow_dispatch":
+        # Manual run: keep user's current minute to feel responsive
+        aligned = now_utc.replace(second=0, microsecond=0)
+        return aligned
+
+    # Scheduled/default: pin to the hour at SNAP_MINUTE_OFFSET (e.g., HH:07:00)
+    # If we are before the offset minute (e.g., HH:03) we pin to the *previous* hour's offset
+    aligned = now_utc.replace(minute=SNAP_MINUTE_OFFSET, second=0, microsecond=0)
+    if now_utc.minute < SNAP_MINUTE_OFFSET:
+        aligned = aligned - dt.timedelta(hours=1)
+        aligned = aligned.replace(minute=SNAP_MINUTE_OFFSET, second=0, microsecond=0)
+    return aligned
+
+def insert_snapshot(cur, ticker_id, as_of_date, price, source="yfinance"):
+    cur.execute(INSERT_SQL, (ticker_id, as_of_date, float(price), source))
     return cur.rowcount
 
 def is_rate_limit_error(e: Exception) -> bool:
     msg = str(e).lower()
-    # yfinance sometimes raises YFRateLimitError; also messages like "too many requests" / 429
     return ("ratelimit" in msg) or ("rate limit" in msg) or ("too many requests" in msg) or ("http 429" in msg) or ("status code 429" in msg)
 
 def download_with_retry(symbols, *, period="2d", interval="1d", group_by="ticker", max_attempts=6):
-    """Batch download with exponential backoff + jitter on rate-limit-like failures."""
     last_err = None
     for attempt in range(1, max_attempts + 1):
         try:
@@ -53,10 +73,9 @@ def download_with_retry(symbols, *, period="2d", interval="1d", group_by="ticker
         except Exception as e:
             last_err = e
             if not is_rate_limit_error(e) and attempt >= 2:
-                # if it doesn't look like rate limiting, don't keep hammering
                 raise
-            sleep_s = min(300, (2 ** (attempt - 1)) * 5)  # 5s,10s,20s,... capped at 5m
-            sleep_s = sleep_s + random.uniform(0, 1.5)   # jitter
+            sleep_s = min(300, (2 ** (attempt - 1)) * 5)
+            sleep_s = sleep_s + random.uniform(0, 1.5)
             print(f"[warn] yfinance download attempt {attempt}/{max_attempts} failed: {e}", file=sys.stderr)
             if attempt < max_attempts:
                 print(f"[info] sleeping {sleep_s:.1f}s before retry", file=sys.stderr)
@@ -70,15 +89,21 @@ def extract_close(data: pd.DataFrame, sym: str, multi: bool) -> float:
     return float(data["Close"].dropna().iloc[-1])
 
 def main():
+    # Compute run timestamp ONCE (so retries don't change it)
+    now_utc = dt.datetime.utcnow()
+    run_ts = compute_run_ts(now_utc)
+    print(f"[info] now_utc={now_utc} ; run_ts={run_ts} ; event={os.getenv('GITHUB_EVENT_NAME','')}")
+    if run_ts > now_utc:
+        # Safety: should never happen, but guard against clock/logic issues
+        run_ts = now_utc.replace(second=0, microsecond=0)
+
     cn = connect()
     cur = cn.cursor()
 
-    # sanity: print where we're connected
     cur.execute("SELECT DATABASE(), @@hostname, @@version")
     db, host, ver = cur.fetchone()
     print(f"[info] Connected to db={db}, host={host}, version={ver}")
 
-    # pull symbols from holdings + active watchlist
     cur.execute("""
         SELECT t.id, t.symbol
         FROM tickers t
@@ -96,7 +121,6 @@ def main():
     symbols = [r[1] for r in rows]
     id_by_symbol = {r[1]: r[0] for r in rows}
 
-    # Batch download (one call) + retry/backoff
     data = download_with_retry(symbols, period="2d", interval="1d", group_by="ticker")
 
     inserted = 0
@@ -106,17 +130,13 @@ def main():
     for sym in symbols:
         try:
             close = extract_close(data, sym, multi)
-            inserted += insert_snapshot(cur, id_by_symbol[sym], close, "yfinance")
+            inserted += insert_snapshot(cur, id_by_symbol[sym], run_ts, close, "yfinance")
         except Exception as e:
             errors += 1
             print(f"[error] {sym}: {e}", file=sys.stderr)
 
     cn.commit()
     print(f"[summary] inserted={inserted}, errors={errors}, symbols={len(symbols)}")
-
-    cur.execute("SELECT COUNT(*) FROM price_snapshots WHERE DATE(as_of_date) = UTC_DATE()")
-    today_cnt = cur.fetchone()[0]
-    print(f"[summary] rows today (UTC): {today_cnt}")
 
 if __name__ == "__main__":
     main()

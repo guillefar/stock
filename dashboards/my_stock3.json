@@ -1,0 +1,687 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "target": {
+          "limit": 100,
+          "matchAny": false,
+          "tags": [],
+          "type": "dashboard"
+        },
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Price (general)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH in_range AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  WHERE $__timeFilter(ps.as_of_date)\n),\nprev AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MAX(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date < $__timeFrom()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\nnext AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MIN(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date > $__timeTo()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\npadded AS (\n  SELECT * FROM in_range\n  UNION ALL SELECT * FROM prev\n  UNION ALL SELECT * FROM next\n)\nSELECT\n  UNIX_TIMESTAMP(ps.as_of_date) AS time_sec,\n  t.symbol AS metric,\n  ps.price * COALESCE(fx.rate,1) AS value\nFROM padded ps\nJOIN tickers t ON t.id=ps.ticker_id\nJOIN v_ticker_status_multi s ON s.ticker_id=t.id\nLEFT JOIN v_fx_latest_with_inverse fx\n  ON fx.base_currency = t.currency AND fx.quote_currency = '${currency}'\nWHERE 1=1\n  AND s.status='${status}'\n  \nORDER BY ps.as_of_date, metric;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "spanNulls": true
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Price difference (general)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH in_range AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  WHERE $__timeFilter(ps.as_of_date)\n),\nprev AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MAX(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date < $__timeFrom()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\nnext AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MIN(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date > $__timeTo()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\npadded AS (\n  SELECT * FROM in_range\n  UNION ALL SELECT * FROM prev\n  UNION ALL SELECT * FROM next\n)\nSELECT\n  UNIX_TIMESTAMP(ps.as_of_date) AS time_sec,\n  t.symbol AS metric,\n  (ps.price - b.base_price) * COALESCE(fx.rate,1) AS value\nFROM padded ps\nJOIN tickers t ON t.id=ps.ticker_id\nJOIN v_ticker_status_multi s ON s.ticker_id=t.id\nLEFT JOIN v_fx_latest_with_inverse fx\n  ON fx.base_currency = t.currency AND fx.quote_currency = '${currency}'\nJOIN v_tracked_baseline_alltime b ON b.ticker_id = t.id\nWHERE 1=1\n  AND s.status='${status}'\n  \nORDER BY ps.as_of_date, metric;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "spanNulls": true
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Price difference in time range (general)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH in_range AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  WHERE $__timeFilter(ps.as_of_date)\n),\nprev AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MAX(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date < $__timeFrom()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\nnext AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MIN(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date > $__timeTo()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\npadded AS (\n  SELECT * FROM in_range\n  UNION ALL SELECT * FROM prev\n  UNION ALL SELECT * FROM next\n)\nSELECT\n  UNIX_TIMESTAMP(ps.as_of_date) AS time_sec,\n  t.symbol AS metric,\n  (ps.price - base.base_price) * COALESCE(fx.rate,1) AS value\nFROM padded ps\nJOIN tickers t ON t.id=ps.ticker_id\nJOIN v_ticker_status_multi s ON s.ticker_id=t.id\nLEFT JOIN v_fx_latest_with_inverse fx\n  ON fx.base_currency = t.currency AND fx.quote_currency = '${currency}'\nJOIN (\n  SELECT\n    t0.ticker_id,\n    COALESCE(p_prev.price, p_first.price) AS base_price\n  FROM (SELECT DISTINCT ticker_id FROM price_snapshots) t0\n  LEFT JOIN (\n    SELECT b.ticker_id, p.price\n    FROM (\n      SELECT ticker_id, MAX(as_of_date) AS ts\n      FROM price_snapshots\n      WHERE as_of_date < $__timeFrom()\n      GROUP BY ticker_id\n    ) b\n    JOIN price_snapshots p ON p.ticker_id=b.ticker_id AND p.as_of_date=b.ts\n  ) p_prev ON p_prev.ticker_id = t0.ticker_id\n  LEFT JOIN (\n    SELECT b.ticker_id, p.price\n    FROM (\n      SELECT ticker_id, MIN(as_of_date) AS ts\n      FROM price_snapshots\n      WHERE $__timeFilter(as_of_date)\n      GROUP BY ticker_id\n    ) b\n    JOIN price_snapshots p ON p.ticker_id=b.ticker_id AND p.as_of_date=b.ts\n  ) p_first ON p_first.ticker_id = t0.ticker_id\n) base ON base.ticker_id = t.id\nWHERE s.status='${status}'\nORDER BY ps.as_of_date, metric;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "spanNulls": true
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Gains (general)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH in_range AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  WHERE $__timeFilter(ps.as_of_date)\n),\nprev AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MAX(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date < $__timeFrom()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\nnext AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MIN(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date > $__timeTo()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\npadded AS (\n  SELECT * FROM in_range\n  UNION ALL SELECT * FROM prev\n  UNION ALL SELECT * FROM next\n)\nSELECT\n  UNIX_TIMESTAMP(ps.as_of_date) AS time_sec,\n  t.symbol AS metric,\n  (h.quantity * (ps.price - h.avg_cost)) * COALESCE(fx.rate,1) AS value\nFROM padded ps\nJOIN tickers t ON t.id=ps.ticker_id\nJOIN v_ticker_status_multi s ON s.ticker_id=t.id\nJOIN holdings h ON h.ticker_id=t.id\nLEFT JOIN v_fx_latest_with_inverse fx\n  ON fx.base_currency = t.currency AND fx.quote_currency = '${currency}'\n\nWHERE 1=1\n  AND s.status='${status}'\n  \nORDER BY ps.as_of_date, metric;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "spanNulls": true
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Gains in time range (general)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH in_range AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  WHERE $__timeFilter(ps.as_of_date)\n),\nprev AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MAX(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date < $__timeFrom()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\nnext AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MIN(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date > $__timeTo()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\npadded AS (\n  SELECT * FROM in_range\n  UNION ALL SELECT * FROM prev\n  UNION ALL SELECT * FROM next\n)\nSELECT\n  UNIX_TIMESTAMP(ps.as_of_date) AS time_sec,\n  t.symbol AS metric,\n  (h.quantity * (ps.price - base.base_price)) * COALESCE(fx.rate,1) AS value\nFROM padded ps\nJOIN tickers t ON t.id=ps.ticker_id\nJOIN v_ticker_status_multi s ON s.ticker_id=t.id\nJOIN holdings h ON h.ticker_id=t.id\nLEFT JOIN v_fx_latest_with_inverse fx\n  ON fx.base_currency = t.currency AND fx.quote_currency = '${currency}'\nJOIN (\n  SELECT\n    t0.ticker_id,\n    COALESCE(p_prev.price, p_first.price) AS base_price\n  FROM (SELECT DISTINCT ticker_id FROM price_snapshots) t0\n  LEFT JOIN (\n    SELECT b.ticker_id, p.price\n    FROM (\n      SELECT ticker_id, MAX(as_of_date) AS ts\n      FROM price_snapshots\n      WHERE as_of_date < $__timeFrom()\n      GROUP BY ticker_id\n    ) b\n    JOIN price_snapshots p ON p.ticker_id=b.ticker_id AND p.as_of_date=b.ts\n  ) p_prev ON p_prev.ticker_id = t0.ticker_id\n  LEFT JOIN (\n    SELECT b.ticker_id, p.price\n    FROM (\n      SELECT ticker_id, MIN(as_of_date) AS ts\n      FROM price_snapshots\n      WHERE $__timeFilter(as_of_date)\n      GROUP BY ticker_id\n    ) b\n    JOIN price_snapshots p ON p.ticker_id=b.ticker_id AND p.as_of_date=b.ts\n  ) p_first ON p_first.ticker_id = t0.ticker_id\n) base ON base.ticker_id = t.id\nWHERE s.status='${status}'\nORDER BY ps.as_of_date, metric;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "spanNulls": true
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Percentage Gains (general)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH in_range AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  WHERE $__timeFilter(ps.as_of_date)\n),\nprev AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MAX(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date < $__timeFrom()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\nnext AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MIN(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date > $__timeTo()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\npadded AS (\n  SELECT * FROM in_range\n  UNION ALL SELECT * FROM prev\n  UNION ALL SELECT * FROM next\n)\nSELECT\n  UNIX_TIMESTAMP(ps.as_of_date) AS time_sec,\n  t.symbol AS metric,\n  100.0 * ((ps.price - b.base_price) / NULLIF(b.base_price,0)) AS value\nFROM padded ps\nJOIN tickers t ON t.id=ps.ticker_id\nJOIN v_ticker_status_multi s ON s.ticker_id=t.id\nJOIN v_tracked_baseline_alltime b ON b.ticker_id = t.id\nWHERE 1=1\n  AND s.status='${status}'\n  \nORDER BY ps.as_of_date, metric;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "spanNulls": true
+          }
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Percentage Gains in time range (general)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH in_range AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  WHERE $__timeFilter(ps.as_of_date)\n),\nprev AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MAX(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date < $__timeFrom()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\nnext AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MIN(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date > $__timeTo()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\npadded AS (\n  SELECT * FROM in_range\n  UNION ALL SELECT * FROM prev\n  UNION ALL SELECT * FROM next\n)\nSELECT\n  UNIX_TIMESTAMP(ps.as_of_date) AS time_sec,\n  t.symbol AS metric,\n  100.0 * ((ps.price - base.base_price) / NULLIF(base.base_price,0)) AS value\nFROM padded ps\nJOIN tickers t ON t.id=ps.ticker_id\nJOIN v_ticker_status_multi s ON s.ticker_id=t.id\nJOIN (\n  SELECT\n    t0.ticker_id,\n    COALESCE(p_prev.price, p_first.price) AS base_price\n  FROM (SELECT DISTINCT ticker_id FROM price_snapshots) t0\n  LEFT JOIN (\n    SELECT b.ticker_id, p.price\n    FROM (\n      SELECT ticker_id, MAX(as_of_date) AS ts\n      FROM price_snapshots\n      WHERE as_of_date < $__timeFrom()\n      GROUP BY ticker_id\n    ) b\n    JOIN price_snapshots p ON p.ticker_id=b.ticker_id AND p.as_of_date=b.ts\n  ) p_prev ON p_prev.ticker_id = t0.ticker_id\n  LEFT JOIN (\n    SELECT b.ticker_id, p.price\n    FROM (\n      SELECT ticker_id, MIN(as_of_date) AS ts\n      FROM price_snapshots\n      WHERE $__timeFilter(as_of_date)\n      GROUP BY ticker_id\n    ) b\n    JOIN price_snapshots p ON p.ticker_id=b.ticker_id AND p.as_of_date=b.ts\n  ) p_first ON p_first.ticker_id = t0.ticker_id\n) base ON base.ticker_id = t.id\nWHERE s.status='${status}'\nORDER BY ps.as_of_date, metric;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "spanNulls": true
+          }
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Distribution (general)",
+      "type": "table",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  t.symbol AS metric,\n  CASE\n    WHEN '${status}'='HOLDING' THEN (h.quantity * ps.price) * COALESCE(fx.rate,1)\n    ELSE ps.price * COALESCE(fx.rate,1)\n  END AS value\nFROM v_ticker_status_multi s\nJOIN tickers t ON t.id=s.ticker_id\nLEFT JOIN holdings h ON h.ticker_id=t.id\nJOIN (\n  SELECT ticker_id, MAX(as_of_date) AS last_ts\n  FROM price_snapshots\n  GROUP BY ticker_id\n) last ON last.ticker_id=t.id\nJOIN price_snapshots ps ON ps.ticker_id=last.ticker_id AND ps.as_of_date=last.last_ts\nLEFT JOIN v_fx_latest_with_inverse fx\n  ON fx.base_currency = t.currency AND fx.quote_currency = '${currency}'\nWHERE s.status='${status}'\nORDER BY value DESC;"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Price (specific)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH in_range AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  WHERE $__timeFilter(ps.as_of_date)\n),\nprev AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MAX(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date < $__timeFrom()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\nnext AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MIN(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date > $__timeTo()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\npadded AS (\n  SELECT * FROM in_range\n  UNION ALL SELECT * FROM prev\n  UNION ALL SELECT * FROM next\n)\nSELECT\n  UNIX_TIMESTAMP(ps.as_of_date) AS time_sec,\n  t.symbol AS metric,\n  ps.price * COALESCE(fx.rate,1) AS value\nFROM padded ps\nJOIN tickers t ON t.id=ps.ticker_id\nJOIN v_ticker_status_multi s ON s.ticker_id=t.id\nLEFT JOIN v_fx_latest_with_inverse fx\n  ON fx.base_currency = t.currency AND fx.quote_currency = '${currency}'\nWHERE 1=1\n  AND s.status='${status}'\n  AND t.symbol IN (${stock:sqlstring})\nORDER BY ps.as_of_date, metric;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "spanNulls": true
+          }
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Price difference (specific)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 31,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH in_range AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  WHERE $__timeFilter(ps.as_of_date)\n),\nprev AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MAX(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date < $__timeFrom()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\nnext AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MIN(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date > $__timeTo()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\npadded AS (\n  SELECT * FROM in_range\n  UNION ALL SELECT * FROM prev\n  UNION ALL SELECT * FROM next\n)\nSELECT\n  UNIX_TIMESTAMP(ps.as_of_date) AS time_sec,\n  t.symbol AS metric,\n  (ps.price - b.base_price) * COALESCE(fx.rate,1) AS value\nFROM padded ps\nJOIN tickers t ON t.id=ps.ticker_id\nJOIN v_ticker_status_multi s ON s.ticker_id=t.id\nLEFT JOIN v_fx_latest_with_inverse fx\n  ON fx.base_currency = t.currency AND fx.quote_currency = '${currency}'\nJOIN v_tracked_baseline_alltime b ON b.ticker_id = t.id\nWHERE 1=1\n  AND s.status='${status}'\n  AND t.symbol IN (${stock:sqlstring})\nORDER BY ps.as_of_date, metric;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "spanNulls": true
+          }
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "Price difference in time range (specific)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 39,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH in_range AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  WHERE $__timeFilter(ps.as_of_date)\n),\nprev AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MAX(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date < $__timeFrom()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\nnext AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MIN(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date > $__timeTo()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\npadded AS (\n  SELECT * FROM in_range\n  UNION ALL SELECT * FROM prev\n  UNION ALL SELECT * FROM next\n)\nSELECT\n  UNIX_TIMESTAMP(ps.as_of_date) AS time_sec,\n  t.symbol AS metric,\n  (ps.price - base.base_price) * COALESCE(fx.rate,1) AS value\nFROM padded ps\nJOIN tickers t ON t.id=ps.ticker_id\nJOIN v_ticker_status_multi s ON s.ticker_id=t.id\nLEFT JOIN v_fx_latest_with_inverse fx\n  ON fx.base_currency = t.currency AND fx.quote_currency = '${currency}'\nJOIN (\n  SELECT\n    t0.ticker_id,\n    COALESCE(p_prev.price, p_first.price) AS base_price\n  FROM (SELECT DISTINCT ticker_id FROM price_snapshots) t0\n  LEFT JOIN (\n    SELECT b.ticker_id, p.price\n    FROM (\n      SELECT ticker_id, MAX(as_of_date) AS ts\n      FROM price_snapshots\n      WHERE as_of_date < $__timeFrom()\n      GROUP BY ticker_id\n    ) b\n    JOIN price_snapshots p ON p.ticker_id=b.ticker_id AND p.as_of_date=b.ts\n  ) p_prev ON p_prev.ticker_id = t0.ticker_id\n  LEFT JOIN (\n    SELECT b.ticker_id, p.price\n    FROM (\n      SELECT ticker_id, MIN(as_of_date) AS ts\n      FROM price_snapshots\n      WHERE $__timeFilter(as_of_date)\n      GROUP BY ticker_id\n    ) b\n    JOIN price_snapshots p ON p.ticker_id=b.ticker_id AND p.as_of_date=b.ts\n  ) p_first ON p_first.ticker_id = t0.ticker_id\n) base ON base.ticker_id = t.id\nWHERE s.status='${status}' AND t.symbol IN (${stock:sqlstring})\nORDER BY ps.as_of_date, metric;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "spanNulls": true
+          }
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Gains (specific)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 39,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH in_range AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  WHERE $__timeFilter(ps.as_of_date)\n),\nprev AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MAX(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date < $__timeFrom()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\nnext AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MIN(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date > $__timeTo()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\npadded AS (\n  SELECT * FROM in_range\n  UNION ALL SELECT * FROM prev\n  UNION ALL SELECT * FROM next\n)\nSELECT\n  UNIX_TIMESTAMP(ps.as_of_date) AS time_sec,\n  t.symbol AS metric,\n  (h.quantity * (ps.price - h.avg_cost)) * COALESCE(fx.rate,1) AS value\nFROM padded ps\nJOIN tickers t ON t.id=ps.ticker_id\nJOIN v_ticker_status_multi s ON s.ticker_id=t.id\nJOIN holdings h ON h.ticker_id=t.id\nLEFT JOIN v_fx_latest_with_inverse fx\n  ON fx.base_currency = t.currency AND fx.quote_currency = '${currency}'\n\nWHERE 1=1\n  AND s.status='${status}'\n  AND t.symbol IN (${stock:sqlstring})\nORDER BY ps.as_of_date, metric;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "spanNulls": true
+          }
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "Gains in time range (specific)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 47,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH in_range AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  WHERE $__timeFilter(ps.as_of_date)\n),\nprev AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MAX(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date < $__timeFrom()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\nnext AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MIN(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date > $__timeTo()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\npadded AS (\n  SELECT * FROM in_range\n  UNION ALL SELECT * FROM prev\n  UNION ALL SELECT * FROM next\n)\nSELECT\n  UNIX_TIMESTAMP(ps.as_of_date) AS time_sec,\n  t.symbol AS metric,\n  (h.quantity * (ps.price - base.base_price)) * COALESCE(fx.rate,1) AS value\nFROM padded ps\nJOIN tickers t ON t.id=ps.ticker_id\nJOIN v_ticker_status_multi s ON s.ticker_id=t.id\nJOIN holdings h ON h.ticker_id=t.id\nLEFT JOIN v_fx_latest_with_inverse fx\n  ON fx.base_currency = t.currency AND fx.quote_currency = '${currency}'\nJOIN (\n  SELECT\n    t0.ticker_id,\n    COALESCE(p_prev.price, p_first.price) AS base_price\n  FROM (SELECT DISTINCT ticker_id FROM price_snapshots) t0\n  LEFT JOIN (\n    SELECT b.ticker_id, p.price\n    FROM (\n      SELECT ticker_id, MAX(as_of_date) AS ts\n      FROM price_snapshots\n      WHERE as_of_date < $__timeFrom()\n      GROUP BY ticker_id\n    ) b\n    JOIN price_snapshots p ON p.ticker_id=b.ticker_id AND p.as_of_date=b.ts\n  ) p_prev ON p_prev.ticker_id = t0.ticker_id\n  LEFT JOIN (\n    SELECT b.ticker_id, p.price\n    FROM (\n      SELECT ticker_id, MIN(as_of_date) AS ts\n      FROM price_snapshots\n      WHERE $__timeFilter(as_of_date)\n      GROUP BY ticker_id\n    ) b\n    JOIN price_snapshots p ON p.ticker_id=b.ticker_id AND p.as_of_date=b.ts\n  ) p_first ON p_first.ticker_id = t0.ticker_id\n) base ON base.ticker_id = t.id\nWHERE s.status='${status}' AND t.symbol IN (${stock:sqlstring})\nORDER BY ps.as_of_date, metric;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "spanNulls": true
+          }
+        }
+      }
+    },
+    {
+      "id": 14,
+      "title": "Percentage Gains (specific)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 47,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH in_range AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  WHERE $__timeFilter(ps.as_of_date)\n),\nprev AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MAX(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date < $__timeFrom()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\nnext AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MIN(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date > $__timeTo()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\npadded AS (\n  SELECT * FROM in_range\n  UNION ALL SELECT * FROM prev\n  UNION ALL SELECT * FROM next\n)\nSELECT\n  UNIX_TIMESTAMP(ps.as_of_date) AS time_sec,\n  t.symbol AS metric,\n  100.0 * ((ps.price - b.base_price) / NULLIF(b.base_price,0)) AS value\nFROM padded ps\nJOIN tickers t ON t.id=ps.ticker_id\nJOIN v_ticker_status_multi s ON s.ticker_id=t.id\nJOIN v_tracked_baseline_alltime b ON b.ticker_id = t.id\nWHERE 1=1\n  AND s.status='${status}'\n  AND t.symbol IN (${stock:sqlstring})\nORDER BY ps.as_of_date, metric;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "spanNulls": true
+          }
+        }
+      }
+    },
+    {
+      "id": 15,
+      "title": "Percentage Gains in time range (specific)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 55,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH in_range AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  WHERE $__timeFilter(ps.as_of_date)\n),\nprev AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MAX(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date < $__timeFrom()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\nnext AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MIN(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date > $__timeTo()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\npadded AS (\n  SELECT * FROM in_range\n  UNION ALL SELECT * FROM prev\n  UNION ALL SELECT * FROM next\n)\nSELECT\n  UNIX_TIMESTAMP(ps.as_of_date) AS time_sec,\n  t.symbol AS metric,\n  100.0 * ((ps.price - base.base_price) / NULLIF(base.base_price,0)) AS value\nFROM padded ps\nJOIN tickers t ON t.id=ps.ticker_id\nJOIN v_ticker_status_multi s ON s.ticker_id=t.id\nJOIN (\n  SELECT\n    t0.ticker_id,\n    COALESCE(p_prev.price, p_first.price) AS base_price\n  FROM (SELECT DISTINCT ticker_id FROM price_snapshots) t0\n  LEFT JOIN (\n    SELECT b.ticker_id, p.price\n    FROM (\n      SELECT ticker_id, MAX(as_of_date) AS ts\n      FROM price_snapshots\n      WHERE as_of_date < $__timeFrom()\n      GROUP BY ticker_id\n    ) b\n    JOIN price_snapshots p ON p.ticker_id=b.ticker_id AND p.as_of_date=b.ts\n  ) p_prev ON p_prev.ticker_id = t0.ticker_id\n  LEFT JOIN (\n    SELECT b.ticker_id, p.price\n    FROM (\n      SELECT ticker_id, MIN(as_of_date) AS ts\n      FROM price_snapshots\n      WHERE $__timeFilter(as_of_date)\n      GROUP BY ticker_id\n    ) b\n    JOIN price_snapshots p ON p.ticker_id=b.ticker_id AND p.as_of_date=b.ts\n  ) p_first ON p_first.ticker_id = t0.ticker_id\n) base ON base.ticker_id = t.id\nWHERE s.status='${status}' AND t.symbol IN (${stock:sqlstring})\nORDER BY ps.as_of_date, metric;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "spanNulls": true
+          }
+        }
+      }
+    },
+    {
+      "id": 16,
+      "title": "Distribution (specific)",
+      "type": "table",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 55,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  t.symbol AS metric,\n  CASE\n    WHEN '${status}'='HOLDING' THEN (h.quantity * ps.price) * COALESCE(fx.rate,1)\n    ELSE ps.price * COALESCE(fx.rate,1)\n  END AS value\nFROM v_ticker_status_multi s\nJOIN tickers t ON t.id=s.ticker_id\nLEFT JOIN holdings h ON h.ticker_id=t.id\nJOIN (\n  SELECT ticker_id, MAX(as_of_date) AS last_ts\n  FROM price_snapshots\n  GROUP BY ticker_id\n) last ON last.ticker_id=t.id\nJOIN price_snapshots ps ON ps.ticker_id=last.ticker_id AND ps.as_of_date=last.last_ts\nLEFT JOIN v_fx_latest_with_inverse fx\n  ON fx.base_currency = t.currency AND fx.quote_currency = '${currency}'\nWHERE s.status='${status}'\n  AND t.symbol IN (${stock:sqlstring})\nORDER BY value DESC;"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "title": "Price difference percentage (general)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 63,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH in_range AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  WHERE $__timeFilter(ps.as_of_date)\n),\nprev AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MAX(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date < $__timeFrom()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\nnext AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MIN(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date > $__timeTo()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\npadded AS (\n  SELECT * FROM in_range\n  UNION ALL SELECT * FROM prev\n  UNION ALL SELECT * FROM next\n)\nSELECT\n  UNIX_TIMESTAMP(ps.as_of_date) AS time_sec,\n  t.symbol AS metric,\n  100.0 * ((ps.price - b.base_price) / NULLIF(b.base_price,0)) AS value\nFROM padded ps\nJOIN tickers t ON t.id=ps.ticker_id\nJOIN v_ticker_status_multi s ON s.ticker_id=t.id\nJOIN v_tracked_baseline_alltime b ON b.ticker_id = t.id\nWHERE s.status='${status}'\nORDER BY ps.as_of_date, metric;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "spanNulls": true
+          }
+        }
+      }
+    },
+    {
+      "id": 18,
+      "title": "Price difference percentage in time range (general)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 63,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH in_range AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  WHERE $__timeFilter(ps.as_of_date)\n),\nprev AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MAX(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date < $__timeFrom()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\nnext AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MIN(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date > $__timeTo()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\npadded AS (\n  SELECT * FROM in_range\n  UNION ALL SELECT * FROM prev\n  UNION ALL SELECT * FROM next\n)\nSELECT\n  UNIX_TIMESTAMP(ps.as_of_date) AS time_sec,\n  t.symbol AS metric,\n  100.0 * ((ps.price - base.base_price) / NULLIF(base.base_price,0)) AS value\nFROM padded ps\nJOIN tickers t ON t.id=ps.ticker_id\nJOIN v_ticker_status_multi s ON s.ticker_id=t.id\nJOIN (\n  SELECT\n    t0.ticker_id,\n    COALESCE(p_prev.price, p_first.price) AS base_price\n  FROM (SELECT DISTINCT ticker_id FROM price_snapshots) t0\n  LEFT JOIN (\n    SELECT b.ticker_id, p.price\n    FROM (\n      SELECT ticker_id, MAX(as_of_date) AS ts\n      FROM price_snapshots\n      WHERE as_of_date < $__timeFrom()\n      GROUP BY ticker_id\n    ) b\n    JOIN price_snapshots p ON p.ticker_id=b.ticker_id AND p.as_of_date=b.ts\n  ) p_prev ON p_prev.ticker_id = t0.ticker_id\n  LEFT JOIN (\n    SELECT b.ticker_id, p.price\n    FROM (\n      SELECT ticker_id, MIN(as_of_date) AS ts\n      FROM price_snapshots\n      WHERE $__timeFilter(as_of_date)\n      GROUP BY ticker_id\n    ) b\n    JOIN price_snapshots p ON p.ticker_id=b.ticker_id AND p.as_of_date=b.ts\n  ) p_first ON p_first.ticker_id = t0.ticker_id\n) base ON base.ticker_id = t.id\nWHERE s.status='${status}'\nORDER BY ps.as_of_date, metric;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "spanNulls": true
+          }
+        }
+      }
+    },
+    {
+      "id": 19,
+      "title": "Price difference percentage (specific)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 71,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH in_range AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  WHERE $__timeFilter(ps.as_of_date)\n),\nprev AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MAX(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date < $__timeFrom()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\nnext AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MIN(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date > $__timeTo()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\npadded AS (\n  SELECT * FROM in_range\n  UNION ALL SELECT * FROM prev\n  UNION ALL SELECT * FROM next\n)\nSELECT\n  UNIX_TIMESTAMP(ps.as_of_date) AS time_sec,\n  t.symbol AS metric,\n  100.0 * ((ps.price - b.base_price) / NULLIF(b.base_price,0)) AS value\nFROM padded ps\nJOIN tickers t ON t.id=ps.ticker_id\nJOIN v_ticker_status_multi s ON s.ticker_id=t.id\nJOIN v_tracked_baseline_alltime b ON b.ticker_id = t.id\nWHERE s.status='${status}' AND t.symbol IN (${stock:sqlstring})\nORDER BY ps.as_of_date, metric;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "spanNulls": true
+          }
+        }
+      }
+    },
+    {
+      "id": 20,
+      "title": "Price difference percentage in time range (specific)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "mysql",
+        "uid": "cfadv004ogglcf"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 71,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH in_range AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  WHERE $__timeFilter(ps.as_of_date)\n),\nprev AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MAX(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date < $__timeFrom()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\nnext AS (\n  SELECT ps.*\n  FROM price_snapshots ps\n  JOIN (\n    SELECT ticker_id, MIN(as_of_date) AS as_of_date\n    FROM price_snapshots\n    WHERE as_of_date > $__timeTo()\n    GROUP BY ticker_id\n  ) x ON x.ticker_id = ps.ticker_id AND x.as_of_date = ps.as_of_date\n),\npadded AS (\n  SELECT * FROM in_range\n  UNION ALL SELECT * FROM prev\n  UNION ALL SELECT * FROM next\n)\nSELECT\n  UNIX_TIMESTAMP(ps.as_of_date) AS time_sec,\n  t.symbol AS metric,\n  100.0 * ((ps.price - base.base_price) / NULLIF(base.base_price,0)) AS value\nFROM padded ps\nJOIN tickers t ON t.id=ps.ticker_id\nJOIN v_ticker_status_multi s ON s.ticker_id=t.id\nJOIN (\n  SELECT\n    t0.ticker_id,\n    COALESCE(p_prev.price, p_first.price) AS base_price\n  FROM (SELECT DISTINCT ticker_id FROM price_snapshots) t0\n  LEFT JOIN (\n    SELECT b.ticker_id, p.price\n    FROM (\n      SELECT ticker_id, MAX(as_of_date) AS ts\n      FROM price_snapshots\n      WHERE as_of_date < $__timeFrom()\n      GROUP BY ticker_id\n    ) b\n    JOIN price_snapshots p ON p.ticker_id=b.ticker_id AND p.as_of_date=b.ts\n  ) p_prev ON p_prev.ticker_id = t0.ticker_id\n  LEFT JOIN (\n    SELECT b.ticker_id, p.price\n    FROM (\n      SELECT ticker_id, MIN(as_of_date) AS ts\n      FROM price_snapshots\n      WHERE $__timeFilter(as_of_date)\n      GROUP BY ticker_id\n    ) b\n    JOIN price_snapshots p ON p.ticker_id=b.ticker_id AND p.as_of_date=b.ts\n  ) p_first ON p_first.ticker_id = t0.ticker_id\n) base ON base.ticker_id = t.id\nWHERE s.status='${status}' AND t.symbol IN (${stock:sqlstring})\nORDER BY ps.as_of_date, metric;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "spanNulls": true
+          }
+        }
+      }
+    }
+  ],
+  "preload": false,
+  "schemaVersion": 42,
+  "tags": ["stocks", "portfolio"],
+  "templating": {
+    "list": [
+      {
+        "name": "status",
+        "label": "Type",
+        "type": "query",
+        "datasource": {
+          "type": "mysql",
+          "uid": "cfadv004ogglcf"
+        },
+        "refresh": 1,
+        "multi": false,
+        "includeAll": false,
+        "query": "SELECT 'Holdings' AS __text, 'HOLDING' AS __value UNION ALL SELECT 'Watchlist','WATCHLIST' UNION ALL SELECT 'Sold','SOLD';",
+        "definition": "SELECT 'Holdings' AS __text, 'HOLDING' AS __value UNION ALL SELECT 'Watchlist','WATCHLIST' UNION ALL SELECT 'Sold','SOLD';",
+        "sort": 1
+      },
+      {
+        "name": "stock",
+        "label": "Symbols",
+        "type": "query",
+        "datasource": {
+          "type": "mysql",
+          "uid": "cfadv004ogglcf"
+        },
+        "refresh": 2,
+        "multi": true,
+        "includeAll": false,
+        "query": "SELECT symbol FROM v_ticker_status_multi WHERE status='${status}' ORDER BY symbol;",
+        "definition": "SELECT symbol FROM v_ticker_status_multi WHERE status='${status}' ORDER BY symbol;",
+        "sort": 1
+      },
+      {
+        "name": "currency",
+        "label": "Reporting CCY",
+        "type": "custom",
+        "multi": false,
+        "includeAll": false,
+        "query": "EUR,USD",
+        "options": [
+          {
+            "text": "EUR",
+            "value": "EUR",
+            "selected": true
+          },
+          {
+            "text": "USD",
+            "value": "USD",
+            "selected": false
+          }
+        ],
+        "current": {
+          "text": "EUR",
+          "value": "EUR"
+        }
+      }
+    ]
+  },
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "My Stock - Minimal Unified (Intraday)",
+  "uid": "my-stock-min-unified-intraday",
+  "version": 37,
+  "weekStart": "monday"
+}
