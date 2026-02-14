@@ -1,4 +1,5 @@
-import os, sys, decimal
+import os, sys, decimal, time, random
+import datetime as dt
 import pymysql
 import yfinance as yf
 
@@ -15,6 +16,129 @@ def dec_or_none(s: str):
 def is_blank(s):
     return s is None or str(s).strip() == ""
 
+def is_rate_limit_error(e: Exception) -> bool:
+    msg = str(e).lower()
+    return ("ratelimit" in msg) or ("rate limit" in msg) or ("too many requests" in msg) or ("http 429" in msg) or ("status code 429" in msg)
+
+def yf_history_with_retry(tk: yf.Ticker, *, start: dt.date, end: dt.date, interval: str, max_attempts: int = 6):
+    last_err = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return tk.history(
+                start=start.strftime("%Y-%m-%d"),
+                end=end.strftime("%Y-%m-%d"),
+                interval=interval,
+                auto_adjust=False,
+            )
+        except Exception as e:
+            last_err = e
+            # Retry mostly on rate limits/transient issues
+            if not is_rate_limit_error(e) and attempt >= 2:
+                break
+            sleep_s = min(120, (2 ** (attempt - 1)) * 2) + random.uniform(0, 1.0)
+            print(f"::warning::yfinance history interval={interval} attempt {attempt}/{max_attempts} failed: {e}")
+            time.sleep(sleep_s)
+    print(f"::warning::yfinance history interval={interval} failed after retries: {last_err}")
+    return None
+
+def to_naive_datetime(x) -> dt.datetime:
+    # yfinance returns pandas timestamps; avoid importing pandas here by using duck-typing
+    try:
+        py = x.to_pydatetime()
+        x = py
+    except Exception:
+        pass
+    if isinstance(x, dt.datetime):
+        if x.tzinfo is not None:
+            return x.astimezone(dt.timezone.utc).replace(tzinfo=None)
+        return x.replace(tzinfo=None)
+    raise TypeError(f"Unsupported datetime type: {type(x)}")
+
+def bucket_ts(ts: dt.datetime, tier: str) -> dt.datetime:
+    """
+    Ensure shared timestamps across tickers (prevents Grafana dots/gaps):
+    - 1h tier -> hour bucket HH:00:00
+    - 1d tier -> day bucket 00:00:00
+    - 1wk tier -> Monday 00:00:00
+    """
+    if tier == "1h":
+        return ts.replace(minute=0, second=0, microsecond=0)
+    if tier == "1d":
+        d = ts.date()
+        return dt.datetime.combine(d, dt.time.min)
+    if tier == "1wk":
+        d = ts.date()
+        monday = d - dt.timedelta(days=d.weekday())  # Monday
+        return dt.datetime.combine(monday, dt.time.min)
+    return ts
+
+def backfill_watch_history(cur, ticker_id: int, symbol: str):
+    """
+    Backfill history for WATCHLIST phase:
+      - 1h: last 7 days
+      - 1d: last 60 days
+      - 1wk: last 1 year
+    Insert IGNORE to respect UNIQUE(ticker_id, as_of_date).
+    Also bucket timestamps so all tickers share a common grid.
+    """
+    ENABLE = (os.getenv("BACKFILL_WATCH_HISTORY", "1") == "1")
+    if not ENABLE:
+        print("::notice::BACKFILL_WATCH_HISTORY=0, skipping history backfill")
+        return
+
+    tk = yf.Ticker(symbol)
+    today = dt.datetime.utcnow().date()
+    end_excl = today + dt.timedelta(days=1)
+
+    windows = [
+        (end_excl - dt.timedelta(days=7),  end_excl, "1h"),
+        (end_excl - dt.timedelta(days=60), end_excl, "1d"),
+        (end_excl - dt.timedelta(days=365), end_excl, "1wk"),
+    ]
+
+    # Dedup in-memory by (bucketed_ts) — keep last write
+    dedup = {}
+
+    for start, end, interval in windows:
+        df = yf_history_with_retry(tk, start=start, end=end, interval=interval)
+        if df is None or getattr(df, "empty", True):
+            print(f"::notice::no history for {symbol} interval={interval}")
+            continue
+
+        # df has columns incl. Close; iterate index
+        try:
+            closes = df["Close"].dropna()
+        except Exception:
+            print(f"::warning::unexpected history format for {symbol} interval={interval}")
+            continue
+
+        count = 0
+        for idx, px in closes.items():
+            ts = bucket_ts(to_naive_datetime(idx), interval)
+            try:
+                dedup[ts] = float(px)
+                count += 1
+            except Exception:
+                continue
+
+        print(f"::notice::{symbol} history interval={interval} rows={count}")
+
+    if not dedup:
+        print(f"::warning::no history rows collected for {symbol}")
+        return
+
+    rows = sorted([(ticker_id, ts, price, f"yfinance_history:{'mixed'}", "WATCHLIST") for ts, price in dedup.items()], key=lambda x: x[1])
+
+    # Insert IGNORE to avoid collisions with existing rows
+    cur.executemany(
+        """
+        INSERT IGNORE INTO price_snapshots (ticker_id, as_of_date, price, price_source, phase)
+        VALUES (%s,%s,%s,%s,%s)
+        """,
+        rows
+    )
+    print(f"::notice::backfill inserted (ignore-collisions) rows={len(rows)} for {symbol}")
+
 def main():
     action    = (os.getenv("ACTION") or "").strip().lower()
     symbol    = (os.getenv("SYMBOL") or "").strip()
@@ -22,7 +146,7 @@ def main():
     price_in  = (os.getenv("PRICE_IN") or "").strip()
     curr_in   = (os.getenv("CURR_IN") or "").strip()
     note_in   = (os.getenv("NOTE_IN") or "").strip()
-    broker_in = (os.getenv("BROKER_IN") or "").strip()  # NEW
+    broker_in = (os.getenv("BROKER_IN") or "").strip()  # optional
 
     if not symbol:
         die("symbol is required")
@@ -67,9 +191,6 @@ def main():
             pass
         return None
 
-    # Determine last_price:
-    # - If PRICE_IN provided, always use it
-    # - Otherwise try resolve via yfinance
     if not price_in:
         last_price = resolve_last_price()
         if last_price is None and action in ("buy", "sell"):
@@ -111,7 +232,7 @@ def main():
         cur.execute("SELECT id FROM brokers WHERE name=%s", (broker_name,))
         r = cur.fetchone()
         if not r:
-            die(f"unknown broker: {broker_name!r} (expected one of existing rows in brokers)")
+            die(f"unknown broker: {broker_name!r} (expected an existing row in brokers)")
         return r[0]
 
     broker_id = None
@@ -164,12 +285,21 @@ def main():
         )
 
     elif action == "add_watch":
-        # Always try to store initial watch price (NULL if unresolved)
-        # sp_add_watch(signature) must include p_initial_price as 5th arg.
         cur.execute(
             "CALL sp_add_watch(%s,%s,%s,%s,%s)",
             (symbol, currency, (note_in or None), long_name, (str(price_dec) if price_dec is not None else None)),
         )
+
+        # Resolve ticker_id for inserts
+        cur.execute("SELECT id FROM tickers WHERE symbol=%s", (symbol,))
+        r = cur.fetchone()
+        if not r:
+            die(f"after sp_add_watch, ticker not found in tickers for {symbol}")
+        ticker_id = r[0]
+
+        # Backfill history immediately (WATCHLIST phase)
+        backfill_watch_history(cur, ticker_id, symbol)
+
         print(
             f"Watch OK -> {symbol} cc={currency} name={long_name!r} "
             f"initial_price={(price_dec if price_dec is not None else None)!r} note={(note_in or None)!r}"
@@ -182,17 +312,40 @@ def main():
     else:
         die(f"unsupported action: {action}")
 
-    # Feedback
+    # Feedback (quick visibility)
     cur.execute(
         """
-        SELECT t.symbol, t.currency, t.name, h.quantity, h.avg_cost, h.note
+        SELECT t.id, t.symbol, t.currency, t.name
         FROM tickers t
-        LEFT JOIN holdings h ON h.ticker_id = t.id
         WHERE t.symbol=%s
         """,
         (symbol,),
     )
-    print("Row ->", cur.fetchall())
+    print("Ticker ->", cur.fetchall())
+
+    cur.execute(
+        """
+        SELECT w.ticker_id, w.active, w.note, w.initial_price, w.initial_price_time
+        FROM watchlist w
+        JOIN tickers t ON t.id=w.ticker_id
+        WHERE t.symbol=%s
+        """,
+        (symbol,),
+    )
+    print("Watchlist ->", cur.fetchall())
+
+    cur.execute(
+        """
+        SELECT ps.as_of_date, ps.price, ps.price_source, ps.phase
+        FROM price_snapshots ps
+        JOIN tickers t ON t.id=ps.ticker_id
+        WHERE t.symbol=%s
+        ORDER BY ps.as_of_date DESC
+        LIMIT 5
+        """,
+        (symbol,),
+    )
+    print("Latest snapshots ->", cur.fetchall())
 
 if __name__ == "__main__":
     main()
