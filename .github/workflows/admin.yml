@@ -15,6 +15,12 @@ on:
         description: Quantity (buy/sell only; blank for others)
         required: false
         default: ""
+      broker:
+        description: Broker (buy/sell only)
+        type: choice
+        options: ["", HeyTrade, MyInvestor, BBVA]
+        required: false
+        default: ""
       price:
         description: Price/share (buy only; blank = use current price)
         required: false
@@ -57,6 +63,7 @@ jobs:
           SYMBOL: ${{ github.event.inputs.symbol }}
           QTY_IN: ${{ github.event.inputs.quantity }}
           PRICE_IN: ${{ github.event.inputs.price }}
+          BROKER_IN: ${{ github.event.inputs.broker }}
           CURR_IN: ${{ github.event.inputs.currency }}
           NOTE_IN: ${{ github.event.inputs.note }}
         run: |

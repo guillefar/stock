@@ -28,9 +28,10 @@ def connect():
     )
     return cn
 
+# UPDATED: include phase
 INSERT_SQL = """
-INSERT INTO price_snapshots (ticker_id, as_of_date, price, price_source)
-VALUES (%s, %s, %s, %s)
+INSERT INTO price_snapshots (ticker_id, as_of_date, price, price_source, phase)
+VALUES (%s, %s, %s, %s, %s)
 """
 
 def compute_run_ts(now_utc: dt.datetime) -> dt.datetime:
@@ -49,8 +50,9 @@ def compute_run_ts(now_utc: dt.datetime) -> dt.datetime:
         aligned = aligned.replace(minute=SNAP_MINUTE_OFFSET, second=0, microsecond=0)
     return aligned
 
-def insert_snapshot(cur, ticker_id, as_of_date, price, source="yfinance"):
-    cur.execute(INSERT_SQL, (ticker_id, as_of_date, float(price), source))
+# UPDATED: accept phase
+def insert_snapshot(cur, ticker_id, as_of_date, price, phase, source="yfinance"):
+    cur.execute(INSERT_SQL, (ticker_id, as_of_date, float(price), source, phase))
     return cur.rowcount
 
 def is_rate_limit_error(e: Exception) -> bool:
@@ -104,12 +106,15 @@ def main():
     db, host, ver = cur.fetchone()
     print(f"[info] Connected to db={db}, host={host}, version={ver}")
 
+    # UPDATED: return phase so inserts can tag WATCHLIST vs HOLDING
     cur.execute("""
-        SELECT t.id, t.symbol
+        SELECT t.id, t.symbol, 'HOLDING' AS phase
         FROM tickers t
         JOIN holdings h ON h.ticker_id = t.id
+
         UNION
-        SELECT t.id, t.symbol
+
+        SELECT t.id, t.symbol, 'WATCHLIST' AS phase
         FROM tickers t
         JOIN watchlist w ON w.ticker_id = t.id AND w.active = 1;
     """)
@@ -120,6 +125,7 @@ def main():
 
     symbols = [r[1] for r in rows]
     id_by_symbol = {r[1]: r[0] for r in rows}
+    phase_by_symbol = {r[1]: r[2] for r in rows}  # NEW
 
     data = download_with_retry(symbols, period="2d", interval="1d", group_by="ticker")
 
@@ -130,7 +136,8 @@ def main():
     for sym in symbols:
         try:
             close = extract_close(data, sym, multi)
-            inserted += insert_snapshot(cur, id_by_symbol[sym], run_ts, close, "yfinance")
+            phase = phase_by_symbol.get(sym, "HOLDING")  # NEW (default safety)
+            inserted += insert_snapshot(cur, id_by_symbol[sym], run_ts, close, phase, "yfinance")
         except Exception as e:
             errors += 1
             print(f"[error] {sym}: {e}", file=sys.stderr)
