@@ -20,7 +20,7 @@ def connect():
         autocommit=True, connect_timeout=10,
     )
 
-def get_usd_per_eur():
+def get_eurusd():
     # EURUSD=X is typically USD per 1 EUR
     tk = yf.Ticker("EURUSD=X")
     try:
@@ -29,13 +29,16 @@ def get_usd_per_eur():
             return float(hist["Close"].dropna().iloc[-1])
     except Exception:
         pass
+
     fi = getattr(tk, "fast_info", None)
     if isinstance(fi, dict):
         p = fi.get("lastPrice") or fi.get("last_price")
-        if p: return float(p)
+        if p:
+            return float(p)
     if fi is not None:
         p = getattr(fi, "last_price", None)
-        if p: return float(p)
+        if p:
+            return float(p)
     return None
 
 def upsert_rate(cur, base, quote, as_of_date, rate):
@@ -47,23 +50,21 @@ def upsert_rate(cur, base, quote, as_of_date, rate):
     )
 
 def main():
-    usd_per_eur = get_usd_per_eur()
-    if usd_per_eur is None or usd_per_eur <= 0:
+    eurusd = get_eurusd()
+    if eurusd is None or eurusd <= 0:
         die("could not fetch EURUSD=X rate from yfinance")
 
-    eur_per_usd = 1.0 / usd_per_eur
     today = dt.date.today()
 
     cn = connect()
     cur = cn.cursor()
 
-    # Convention:
-    # rate means: 1 unit of base_currency = rate units of quote_currency
-    # Store both directions for convenience:
-    upsert_rate(cur, "USD", "EUR", today, eur_per_usd)  # 1 USD = X EUR
-    upsert_rate(cur, "EUR", "USD", today, usd_per_eur)  # 1 EUR = X USD
+    # OPTION A: store ONLY one canonical direction in fx_rates.
+    # Convention: rate = quote per 1 base.
+    # Canonical pair for now: EUR -> USD (EURUSD=X)
+    upsert_rate(cur, "EUR", "USD", today, eurusd)
 
-    print(f"[ok] FX {today}: 1 USD = {eur_per_usd:.6f} EUR ; 1 EUR = {usd_per_eur:.6f} USD")
+    print(f"[ok] FX {today}: 1 EUR = {eurusd:.6f} USD (stored only EUR->USD)")
 
 if __name__ == "__main__":
     main()
