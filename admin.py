@@ -92,3 +92,107 @@ def main():
 
     qty = dec_or_none(qty_in) if qty_in else None
     price_dec = decimal.Decimal(str(last_price)) if last_price is not None else None
+
+    # DB connect
+    cn = pymysql.connect(
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASS"),
+        database=os.getenv("DB_NAME"),
+        port=int(os.getenv("DB_PORT") or "3306"),
+        autocommit=True,
+        connect_timeout=10,
+    )
+    cur = cn.cursor()
+
+    def resolve_broker_id(broker_name: str):
+        if is_blank(broker_name):
+            return None
+        cur.execute("SELECT id FROM brokers WHERE name=%s", (broker_name,))
+        r = cur.fetchone()
+        if not r:
+            die(f"unknown broker: {broker_name!r} (expected one of existing rows in brokers)")
+        return r[0]
+
+    broker_id = None
+    if action in ("buy", "sell"):
+        broker_id = resolve_broker_id(broker_in)
+
+    def insert_txn(txn_type, qty, price_dec, currency, note, broker_id):
+        cur.execute("SELECT id FROM tickers WHERE symbol=%s", (symbol,))
+        r = cur.fetchone()
+        if not r:
+            die(f"could not resolve ticker_id for {symbol}")
+        ticker_id = r[0]
+        cur.execute(
+            "INSERT INTO transactions (ticker_id, txn_type, quantity, price, fees, currency, note, source, broker_id) "
+            "VALUES (%s,%s,%s,%s,NULL,%s,%s,'admin',%s)",
+            (ticker_id, txn_type, str(qty), str(price_dec), currency, (note or None), broker_id),
+        )
+
+    if action == "buy":
+        if qty is None or qty <= 0:
+            die("quantity is required and must be > 0 for buy")
+        if price_dec is None:
+            die("price could not be resolved for buy action")
+
+        cur.execute(
+            "CALL sp_buy(%s,%s,%s,%s,%s,%s)",
+            (symbol, currency, str(qty), str(price_dec), long_name, (note_in or None)),
+        )
+        insert_txn("BUY", qty, price_dec, currency, note_in, broker_id)
+
+        print(
+            f"Buy OK -> {symbol} qty={qty} price={price_dec} cc={currency} "
+            f"broker={(broker_in or None)!r} name={long_name!r} note={(note_in or None)!r}"
+        )
+
+    elif action == "sell":
+        if qty is None or qty <= 0:
+            die("quantity is required and must be > 0 for sell")
+
+        cur.execute("CALL sp_sell(%s,%s,%s)", (symbol, str(qty), (note_in or None)))
+
+        if price_dec is None:
+            die("price could not be resolved for sell action")
+
+        insert_txn("SELL", qty, price_dec, currency, note_in, broker_id)
+
+        print(
+            f"Sell OK -> {symbol} qty={qty} price={price_dec} cc={currency} "
+            f"broker={(broker_in or None)!r} note={(note_in or None)!r}"
+        )
+
+    elif action == "add_watch":
+        # Always try to store initial watch price (NULL if unresolved)
+        # sp_add_watch(signature) must include p_initial_price as 5th arg.
+        cur.execute(
+            "CALL sp_add_watch(%s,%s,%s,%s,%s)",
+            (symbol, currency, (note_in or None), long_name, (str(price_dec) if price_dec is not None else None)),
+        )
+        print(
+            f"Watch OK -> {symbol} cc={currency} name={long_name!r} "
+            f"initial_price={(price_dec if price_dec is not None else None)!r} note={(note_in or None)!r}"
+        )
+
+    elif action == "deactivate_watch":
+        cur.execute("CALL sp_deactivate_watch(%s)", (symbol,))
+        print(f"Watch deactivated -> {symbol}")
+
+    else:
+        die(f"unsupported action: {action}")
+
+    # Feedback
+    cur.execute(
+        """
+        SELECT t.symbol, t.currency, t.name, h.quantity, h.avg_cost, h.note
+        FROM tickers t
+        LEFT JOIN holdings h ON h.ticker_id = t.id
+        WHERE t.symbol=%s
+        """,
+        (symbol,),
+    )
+    print("Row ->", cur.fetchall())
+
+if __name__ == "__main__":
+    main()
