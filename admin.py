@@ -3,6 +3,9 @@ import datetime as dt
 import pymysql
 import yfinance as yf
 
+# Canonical minute offset to align snapshots (matches collector)
+SNAP_MINUTE_OFFSET = 7
+
 def die(msg: str) -> None:
     print(f"::error::{msg}")
     sys.exit(1)
@@ -54,32 +57,101 @@ def to_naive_datetime(x) -> dt.datetime:
         return x.replace(tzinfo=None)
     raise TypeError(f"Unsupported datetime type: {type(x)}")
 
-def bucket_ts(ts: dt.datetime, tier: str) -> dt.datetime:
+
+def bucket_ts(ts: dt.datetime, tier: str, minute_offset: int = SNAP_MINUTE_OFFSET) -> dt.datetime:
     """
-    Ensure shared timestamps across tickers (prevents Grafana dots/gaps):
-    - 1h tier -> hour bucket HH:00:00
-    - 1d tier -> day bucket 00:00:00
-    - 1wk tier -> Monday 00:00:00
+    Bucket timestamps onto a canonical grid to align across symbols for Grafana.
+
+    We intentionally map intraday watchlist history onto the production collector cadence:
+      - tier '1h' (yfinance fetch) -> 3-hour buckets at HH where HH % 3 == 0, minute=:07
+      - tier '1d' -> 00:07
+      - tier '1wk' -> Monday 00:07
     """
     if tier == "1h":
-        return ts.replace(minute=0, second=0, microsecond=0)
+        h = ts.hour - (ts.hour % 3)
+        return ts.replace(hour=h, minute=minute_offset, second=0, microsecond=0)
     if tier == "1d":
-        d = ts.date()
-        return dt.datetime.combine(d, dt.time.min)
+        return dt.datetime.combine(ts.date(), dt.time(hour=0, minute=minute_offset))
     if tier == "1wk":
         d = ts.date()
-        monday = d - dt.timedelta(days=d.weekday())  # Monday
-        return dt.datetime.combine(monday, dt.time.min)
+        monday = d - dt.timedelta(days=d.weekday())
+        return dt.datetime.combine(monday, dt.time(hour=0, minute=minute_offset))
     return ts
+
+def fetch_last_snapshot_before(cur, ticker_id: int, phase: str, before_ts: dt.datetime):
+    """Return latest snapshot price strictly before before_ts for (ticker_id, phase)."""
+    cur.execute(
+        """
+        SELECT as_of_date, price
+        FROM price_snapshots
+        WHERE ticker_id=%s AND phase=%s AND as_of_date < %s
+        ORDER BY as_of_date DESC
+        LIMIT 1
+        """,
+        (ticker_id, phase, before_ts),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    # cursor is tuple-based
+    return (row[0], float(row[1]))
+
+
+def build_grid(start_dt: dt.datetime, end_dt_exclusive: dt.datetime, tier: str, minute_offset: int = SNAP_MINUTE_OFFSET):
+    """Build canonical grid timestamps >= start_dt and < end_dt_exclusive."""
+    grid = []
+
+    if tier == "1d":
+        cur = dt.datetime.combine(start_dt.date(), dt.time(hour=0, minute=minute_offset))
+        step = dt.timedelta(days=1)
+    elif tier == "1wk":
+        d = start_dt.date()
+        monday = d - dt.timedelta(days=d.weekday())
+        cur = dt.datetime.combine(monday, dt.time(hour=0, minute=minute_offset))
+        step = dt.timedelta(days=7)
+    else:  # '1h' fetched -> 3h grid
+        base = start_dt.replace(minute=minute_offset, second=0, microsecond=0)
+        h = base.hour - (base.hour % 3)
+        cur = base.replace(hour=h)
+        if cur < start_dt:
+            cur += dt.timedelta(hours=3)
+        step = dt.timedelta(hours=3)
+
+    while cur < end_dt_exclusive:
+        if cur >= start_dt:
+            grid.append(cur)
+        cur += step
+    return grid
+
+
+def ffill_on_grid(grid, known, prior_price):
+    """Return (real_rows, ffill_rows) as lists of (ts, price)."""
+    real_rows = []
+    ffill_rows = []
+    last = prior_price
+    for g in grid:
+        if g in known:
+            last = known[g]
+            real_rows.append((g, last))
+        elif last is not None:
+            ffill_rows.append((g, last))
+    return real_rows, ffill_rows
+
 
 def backfill_watch_history(cur, ticker_id: int, symbol: str):
     """
-    Backfill history for WATCHLIST phase:
-      - 1h: last 7 days
-      - 1d: last 60 days
-      - 1wk: last 1 year
-    Insert IGNORE to respect UNIQUE(ticker_id, as_of_date).
-    Also bucket timestamps so all tickers share a common grid.
+    Backfill history for WATCHLIST phase using a shared timestamp grid + forward-fill
+    (prevents Grafana dots/gaps when multiple series are plotted together).
+
+    Tier windows (fixed):
+      - 1wk: last 1 year (bucket to Monday 00:07)
+      - 1d:  last 60 days (bucket to 00:07)
+      - 1h:  last 7 days fetched from yfinance, but mapped to a 3-hour grid at :07
+
+    Notes:
+      - INSERT IGNORE respects UNIQUE(ticker_id, as_of_date)
+      - We process tiers oldest->newest so intraday can seed from daily if needed.
+      - Forward-fill happens *within WATCHLIST phase only* (never crosses to HOLDING).
     """
     ENABLE = (os.getenv("BACKFILL_WATCH_HISTORY", "1") == "1")
     if not ENABLE:
@@ -90,14 +162,14 @@ def backfill_watch_history(cur, ticker_id: int, symbol: str):
     today = dt.datetime.utcnow().date()
     end_excl = today + dt.timedelta(days=1)
 
+    # Oldest -> newest (important for seeding intraday ffill)
     windows = [
-        (end_excl - dt.timedelta(days=7),  end_excl, "1h"),
-        (end_excl - dt.timedelta(days=60), end_excl, "1d"),
         (end_excl - dt.timedelta(days=365), end_excl, "1wk"),
+        (end_excl - dt.timedelta(days=60),  end_excl, "1d"),
+        (end_excl - dt.timedelta(days=7),   end_excl, "1h"),
     ]
 
-    # Dedup in-memory by (bucketed_ts) — keep last write
-    dedup = {}
+    total_rows = 0
 
     for start, end, interval in windows:
         df = yf_history_with_retry(tk, start=start, end=end, interval=interval)
@@ -105,39 +177,59 @@ def backfill_watch_history(cur, ticker_id: int, symbol: str):
             print(f"::notice::no history for {symbol} interval={interval}")
             continue
 
-        # df has columns incl. Close; iterate index
         try:
             closes = df["Close"].dropna()
         except Exception:
             print(f"::warning::unexpected history format for {symbol} interval={interval}")
             continue
 
+        # Collect known points bucketed to the canonical grid
+        known = {}
         count = 0
         for idx, px in closes.items():
             ts = bucket_ts(to_naive_datetime(idx), interval)
             try:
-                dedup[ts] = float(px)
+                known[ts] = float(px)
                 count += 1
             except Exception:
                 continue
 
         print(f"::notice::{symbol} history interval={interval} rows={count}")
 
-    if not dedup:
-        print(f"::warning::no history rows collected for {symbol}")
-        return
+        if not known:
+            continue
 
-    rows = sorted([(ticker_id, ts, price, f"yfinance_history:{'mixed'}", "WATCHLIST") for ts, price in dedup.items()], key=lambda x: x[1])
+        # Build grid and forward-fill
+        start_dt = dt.datetime.combine(start, dt.time.min)
+        end_dt = dt.datetime.combine(end, dt.time.min)
 
-    # Insert IGNORE to avoid collisions with existing rows
-    cur.executemany(
-        """
-        INSERT IGNORE INTO price_snapshots (ticker_id, as_of_date, price, price_source, phase)
-        VALUES (%s,%s,%s,%s,%s)
-        """,
-        rows
-    )
-    print(f"::notice::backfill inserted (ignore-collisions) rows={len(rows)} for {symbol}")
+        prior = fetch_last_snapshot_before(cur, ticker_id, "WATCHLIST", start_dt)
+        prior_price = prior[1] if prior else None
+
+        grid = build_grid(start_dt, end_dt, interval)
+        real_rows, ffill_rows = ffill_on_grid(grid, known, prior_price)
+
+        # Insert (real + ffill)
+        def _insert(rows, source):
+            nonlocal total_rows
+            if not rows:
+                return
+            cur.executemany(
+                """
+                INSERT IGNORE INTO price_snapshots (ticker_id, as_of_date, price, price_source, phase)
+                VALUES (%s,%s,%s,%s,%s)
+                """,
+                [(ticker_id, ts, price, source, "WATCHLIST") for (ts, price) in rows],
+            )
+            total_rows += len(rows)
+
+        _insert(real_rows, f"yfinance_history:{interval}")
+        tier_label = "3h" if interval == "1h" else interval
+        _insert(ffill_rows, f"ffill_grid:{tier_label}")
+
+        print(f"::notice::{symbol} interval={interval} grid={len(grid)} real={len(real_rows)} ffill={len(ffill_rows)}")
+
+    print(f"::notice::backfill inserted (ignore-collisions) rows={total_rows} for {symbol}")
 
 def main():
     action    = (os.getenv("ACTION") or "").strip().lower()
