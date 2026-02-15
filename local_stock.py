@@ -10,7 +10,15 @@ import pandas as pd
 import yfinance as yf
 
 
+
+# Canonical minute offset to align snapshots (matches collector)
+SNAP_MINUTE_OFFSET = 7
+
+# -------------------------
+# Env + DB helpers
+# -------------------------
 def load_env_file(path: str) -> None:
+    """Minimal .env loader (KEY=VALUE). Ignores comments and blank lines."""
     if not path:
         return
     with open(path, "r", encoding="utf-8") as f:
@@ -46,6 +54,7 @@ def db_connect():
 
 
 def pick(*vals):
+    """Return first non-empty (not None, not '')."""
     for v in vals:
         if v is None:
             continue
@@ -64,6 +73,7 @@ def parse_ymd_hms(s: str) -> dt.datetime:
 
 
 def to_naive_datetime(x) -> dt.datetime:
+    """Convert pandas Timestamp / datetime to naive datetime (drop tz)."""
     if isinstance(x, pd.Timestamp):
         x = x.to_pydatetime()
     if isinstance(x, dt.datetime):
@@ -73,14 +83,8 @@ def to_naive_datetime(x) -> dt.datetime:
     raise TypeError(f"Unsupported datetime type: {type(x)}")
 
 
-# -------------------------
-# Robust schema inspection
-# -------------------------
 def existing_columns(cn, table_name: str) -> set:
-    """
-    Return existing column names for table_name, robust to cursor key casing.
-    We alias to 'col' so our dict key is stable.
-    """
+    """Return existing column names for table_name; alias ensures stable dict key."""
     with cn.cursor() as cur:
         cur.execute(
             """
@@ -94,6 +98,9 @@ def existing_columns(cn, table_name: str) -> set:
         return {r["col"] for r in cur.fetchall()}
 
 
+# -------------------------
+# Schema ensure (idempotent)
+# -------------------------
 def ensure_tickers_columns(cn) -> None:
     wanted = [
         ("long_business_summary", "TEXT NULL"),
@@ -235,6 +242,7 @@ def update_ticker_currency(cn, symbol: str, info: Dict[str, Any], dry_run: bool)
 
 
 def yf_history(symbol: str, start: dt.date, end: dt.date, interval: str) -> pd.DataFrame:
+    """Download history in [start, end) date window."""
     tk = yf.Ticker(symbol)
     return tk.history(
         start=start.strftime("%Y-%m-%d"),
@@ -245,6 +253,7 @@ def yf_history(symbol: str, start: dt.date, end: dt.date, interval: str) -> pd.D
 
 
 def yf_close_on_date(symbol: str, day: dt.date) -> Optional[float]:
+    """Get daily close for a specific calendar day (best effort)."""
     tk = yf.Ticker(symbol)
     start = day
     end = day + dt.timedelta(days=1)
@@ -258,7 +267,305 @@ def yf_close_on_date(symbol: str, day: dt.date) -> Optional[float]:
 
 
 # -------------------------
-# Watchlist operations
+# Snapshot helpers
+# -------------------------
+def bucket_ts(ts: dt.datetime, interval: str, minute_offset: int = SNAP_MINUTE_OFFSET) -> dt.datetime:
+    """
+    Bucket timestamps onto a canonical grid (UTC naive) to align across symbols for Grafana.
+
+    We intentionally map intraday history onto the production collector cadence:
+      - interval '1h' (yfinance fetch) -> 3-hour buckets at HH where HH % 3 == 0, minute=:07
+      - interval '1d' -> 00:07
+      - interval '1wk' -> Monday 00:07
+    """
+    # Ensure naive datetime in UTC (caller should already do this)
+    if interval == "1h":
+        h = ts.hour - (ts.hour % 3)
+        return ts.replace(hour=h, minute=minute_offset, second=0, microsecond=0)
+    if interval == "1d":
+        return dt.datetime.combine(ts.date(), dt.time(hour=0, minute=minute_offset))
+    if interval == "1wk":
+        d = ts.date()
+        monday = d - dt.timedelta(days=d.weekday())
+        return dt.datetime.combine(monday, dt.time(hour=0, minute=minute_offset))
+    return ts
+
+def fetch_last_snapshot_before(
+    cn,
+    ticker_id: int,
+    phase: str,
+    before_ts: dt.datetime,
+) -> Optional[Tuple[dt.datetime, float]]:
+    """Return the latest snapshot strictly before before_ts for (ticker_id, phase)."""
+    with cn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT as_of_date, price
+            FROM price_snapshots
+            WHERE ticker_id = %s AND phase = %s AND as_of_date < %s
+            ORDER BY as_of_date DESC
+            LIMIT 1
+            """,
+            (ticker_id, phase, before_ts),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    # DictCursor returns a dict; be tolerant if driver returns tuples.
+    if isinstance(row, dict):
+        return (row["as_of_date"], float(row["price"]))
+    return (row[0], float(row[1]))
+
+
+
+def build_grid(
+    start_dt: dt.datetime,
+    end_dt_exclusive: dt.datetime,
+    interval: str,
+    minute_offset: int = SNAP_MINUTE_OFFSET,
+) -> List[dt.datetime]:
+    """Build canonical grid timestamps >= start_dt and < end_dt_exclusive."""
+    grid: List[dt.datetime] = []
+
+    if interval == "1d":
+        cur = dt.datetime.combine(start_dt.date(), dt.time(hour=0, minute=minute_offset))
+        step = dt.timedelta(days=1)
+    elif interval == "1wk":
+        d = start_dt.date()
+        monday = d - dt.timedelta(days=d.weekday())
+        cur = dt.datetime.combine(monday, dt.time(hour=0, minute=minute_offset))
+        step = dt.timedelta(days=7)
+    else:  # '1h' fetched -> 3h grid
+        base = start_dt.replace(minute=minute_offset, second=0, microsecond=0)
+        h = base.hour - (base.hour % 3)
+        cur = base.replace(hour=h)
+        if cur < start_dt:
+            cur += dt.timedelta(hours=3)
+        step = dt.timedelta(hours=3)
+
+    while cur < end_dt_exclusive:
+        if cur >= start_dt:
+            grid.append(cur)
+        cur += step
+    return grid
+
+
+def ffill_on_grid(
+    grid: List[dt.datetime],
+    known: Dict[dt.datetime, float],
+    prior_price: Optional[float],
+) -> Tuple[List[Tuple[dt.datetime, float]], List[Tuple[dt.datetime, float]]]:
+    """
+    Forward-fill prices across the grid:
+      - returns (real_rows, ffill_rows)
+      - real_rows are points that existed in 'known'
+      - ffill_rows are synthetic points filled with the last seen price (within the same phase)
+    """
+    real_rows: List[Tuple[dt.datetime, float]] = []
+    ffill_rows: List[Tuple[dt.datetime, float]] = []
+
+    last = prior_price
+    for g in grid:
+        if g in known:
+            last = known[g]
+            real_rows.append((g, last))
+        elif last is not None:
+            ffill_rows.append((g, last))
+
+    return real_rows, ffill_rows
+
+def insert_snapshots_phase(
+    cn,
+    ticker_id: int,
+    phase: str,
+    rows: List[Tuple[dt.datetime, float]],
+    source: str,
+    dry_run: bool,
+) -> int:
+    if not rows:
+        return 0
+    if dry_run:
+        print(f"[DRY] would insert {len(rows)} {phase} snapshots for ticker_id={ticker_id} source={source}")
+        return len(rows)
+
+    with cn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT IGNORE INTO price_snapshots (ticker_id, as_of_date, price, price_source, phase)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            [(ticker_id, ts, float(px), source, phase) for (ts, px) in rows],
+        )
+    return len(rows)
+
+
+def delete_snapshots_in_range(cn, ticker_id: int, phase: str, start_dt: dt.datetime, end_dt: dt.datetime, dry_run: bool):
+    if dry_run:
+        print(f"[DRY] would delete snapshots ticker_id={ticker_id} phase={phase} range=[{start_dt},{end_dt})")
+        return
+    with cn.cursor() as cur:
+        cur.execute(
+            """
+            DELETE FROM price_snapshots
+            WHERE ticker_id=%s AND phase=%s
+              AND as_of_date >= %s AND as_of_date < %s
+            """,
+            (ticker_id, phase, start_dt, end_dt),
+        )
+
+
+def ensure_ticker_exists(cn, symbol: str, dry_run: bool) -> int:
+    """Ensure tickers row exists (best effort) and return ticker_id."""
+    with cn.cursor() as cur:
+        cur.execute("SELECT id FROM tickers WHERE symbol=%s", (symbol,))
+        r = cur.fetchone()
+        if r:
+            return int(r["id"])
+
+    info = fetch_yf_info(symbol)
+    currency = info.get("currency") or "USD"
+    name = pick(info.get("longName"), info.get("shortName"), symbol)
+
+    if dry_run:
+        print(f"[DRY] would insert tickers row symbol={symbol} currency={currency} name={name!r}")
+    else:
+        with cn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO tickers(symbol, currency, name)
+                VALUES (%s,%s,%s)
+                ON DUPLICATE KEY UPDATE
+                  currency = VALUES(currency),
+                  name = COALESCE(VALUES(name), name)
+                """,
+                (symbol, currency, name),
+            )
+
+    with cn.cursor() as cur:
+        cur.execute("SELECT id FROM tickers WHERE symbol=%s", (symbol,))
+        r = cur.fetchone()
+        if not r:
+            raise RuntimeError(f"Could not ensure tickers row for {symbol}")
+        return int(r["id"])
+
+
+# -------------------------
+# NEW: Tiered backfill for a specific symbol
+# -------------------------
+def backfill_symbol_tiered(
+    cn,
+    symbol: str,
+    end_date_inclusive: dt.date,
+    phase: str,
+    overwrite: bool,
+    do_bucket: bool,
+    sleep_s: float,
+    dry_run: bool,
+):
+    """
+    Tiered history backfill for one symbol ending at end_date_inclusive:
+      - 1h (fetched) -> 3-hour grid for last 7 days
+      - 1d for last 60 days
+      - 1wk for last 365 days
+
+    If do_bucket=True:
+      - timestamps are bucketed to the canonical grid (minute :07)
+      - missing grid points are forward-filled (within the same phase) to produce continuous Grafana lines
+    """
+    if phase not in ("WATCHLIST", "HOLDING"):
+        raise SystemExit("history-phase must be WATCHLIST or HOLDING")
+
+    ticker_id = ensure_ticker_exists(cn, symbol, dry_run=dry_run)
+
+    end_excl = end_date_inclusive + dt.timedelta(days=1)
+
+    windows: List[Tuple[str, int]] = [
+        ("1wk", 365),
+        ("1d", 60),
+        ("1h", 7),
+    ]
+
+    # Global delete window if overwrite
+    global_start = end_excl - dt.timedelta(days=max(d for _, d in windows))
+    global_start_dt = dt.datetime.combine(global_start, dt.time.min)
+    global_end_dt = dt.datetime.combine(end_excl, dt.time.min)
+
+    if overwrite:
+        delete_snapshots_in_range(cn, ticker_id, phase, global_start_dt, global_end_dt, dry_run=dry_run)
+
+    total_inserted = 0
+
+    for interval, days in windows:
+        start = end_excl - dt.timedelta(days=days)
+        start_dt = dt.datetime.combine(start, dt.time.min)
+        end_dt = dt.datetime.combine(end_excl, dt.time.min)
+
+        df = yf_history(symbol, start=start, end=end_excl, interval=interval)
+        if df is None or df.empty:
+            print(f"[info] no data for {symbol} interval={interval}")
+            continue
+
+        closes = df["Close"].dropna()
+
+        known: Dict[dt.datetime, float] = {}
+        for ts, px in closes.items():
+            dts = to_naive_datetime(ts)
+            if do_bucket:
+                dts = bucket_ts(dts, interval)
+            known[dts] = float(px)
+
+        if not do_bucket:
+            rows = sorted([(ts, px) for ts, px in known.items()], key=lambda x: x[0])
+            inserted = insert_snapshots_phase(
+                cn,
+                ticker_id=ticker_id,
+                phase=phase,
+                rows=rows,
+                source=f"yfinance_history:{interval}",
+                dry_run=dry_run,
+            )
+            total_inserted += inserted
+            print(f"[summary] {symbol} interval={interval} rows={len(rows)} inserted={inserted}")
+            if sleep_s:
+                time.sleep(sleep_s)
+            continue
+
+        prior = None if dry_run else fetch_last_snapshot_before(cn, ticker_id, phase, start_dt)
+        prior_price = prior[1] if prior else None
+
+        grid = build_grid(start_dt, end_dt, interval)
+        real_rows, ffill_rows = ffill_on_grid(grid, known, prior_price)
+
+        inserted_real = insert_snapshots_phase(
+            cn,
+            ticker_id=ticker_id,
+            phase=phase,
+            rows=real_rows,
+            source=f"yfinance_history:{interval}",
+            dry_run=dry_run,
+        )
+        inserted_ffill = insert_snapshots_phase(
+            cn,
+            ticker_id=ticker_id,
+            phase=phase,
+            rows=ffill_rows,
+            source=f"ffill_grid:{'3h' if interval=='1h' else interval}",
+            dry_run=dry_run,
+        )
+
+        total_inserted += (inserted_real + inserted_ffill)
+        print(
+            f"[summary] {symbol} interval={interval} grid={len(grid)} "
+            f"real={len(real_rows)} ffill={len(ffill_rows)} inserted={inserted_real + inserted_ffill}"
+        )
+
+        if sleep_s:
+            time.sleep(sleep_s)
+
+    print(f"[summary] backfill-symbol-tiered symbol={symbol} phase={phase} inserted_total={total_inserted}")
+
+# -------------------------
+# Watchlist utility (unchanged)
 # -------------------------
 def get_active_watchlist_symbols(cn, symbols_csv: Optional[str]) -> List[Tuple[int, str]]:
     filt = None
@@ -291,38 +598,6 @@ def get_active_watchlist_symbols(cn, symbols_csv: Optional[str]) -> List[Tuple[i
         return [(r["ticker_id"], r["symbol"]) for r in cur.fetchall()]
 
 
-def delete_watchlist_snapshots_in_range(cn, ticker_id: int, start_dt: dt.datetime, end_dt: dt.datetime):
-    with cn.cursor() as cur:
-        cur.execute(
-            """
-            DELETE FROM price_snapshots
-            WHERE ticker_id=%s
-              AND phase='WATCHLIST'
-              AND as_of_date >= %s
-              AND as_of_date < %s
-            """,
-            (ticker_id, start_dt, end_dt),
-        )
-
-
-def insert_watchlist_snapshots(cn, ticker_id: int, rows: List[Tuple[dt.datetime, float]], source: str, dry_run: bool):
-    if not rows:
-        return 0
-    if dry_run:
-        print(f"[DRY] would insert {len(rows)} WATCHLIST snapshots for ticker_id={ticker_id} source={source}")
-        return len(rows)
-
-    with cn.cursor() as cur:
-        cur.executemany(
-            """
-            INSERT IGNORE INTO price_snapshots (ticker_id, as_of_date, price, price_source, phase)
-            VALUES (%s, %s, %s, %s, 'WATCHLIST')
-            """,
-            [(ticker_id, ts, float(px), source) for (ts, px) in rows],
-        )
-    return len(rows)
-
-
 def build_tiered_backfill_windows(end_date: dt.date) -> List[Tuple[dt.date, dt.date, str, str]]:
     end_exclusive = end_date + dt.timedelta(days=1)
     return [
@@ -332,15 +607,29 @@ def build_tiered_backfill_windows(end_date: dt.date) -> List[Tuple[dt.date, dt.d
     ]
 
 
-def backfill_watchlist_history(cn, symbols_csv: Optional[str], end_date: dt.date, overwrite: bool, sleep_s: float, dry_run: bool):
+def backfill_watchlist_history(
+    cn,
+    symbols_csv: Optional[str],
+    end_date: dt.date,
+    overwrite: bool,
+    do_bucket: bool,
+    sleep_s: float,
+    dry_run: bool,
+):
     pairs = get_active_watchlist_symbols(cn, symbols_csv)
     print(f"Active watchlist symbols: {len(pairs)}")
 
-    windows = build_tiered_backfill_windows(end_date)
-    global_start = min(w[0] for w in windows)
-    global_end_excl = max(w[1] for w in windows)
+    # Tier windows (inclusive end_date -> end_excl)
+    end_excl = end_date + dt.timedelta(days=1)
+    windows: List[Tuple[str, int]] = [
+        ("1wk", 365),
+        ("1d", 60),
+        ("1h", 7),
+    ]
+
+    global_start = end_excl - dt.timedelta(days=max(d for _, d in windows))
     global_start_dt = dt.datetime.combine(global_start, dt.time.min)
-    global_end_dt = dt.datetime.combine(global_end_excl, dt.time.min)
+    global_end_dt = dt.datetime.combine(end_excl, dt.time.min)
 
     total_inserted = 0
 
@@ -348,16 +637,17 @@ def backfill_watchlist_history(cn, symbols_csv: Optional[str], end_date: dt.date
         print(f"[{i}/{len(pairs)}] backfill {sym}")
 
         if overwrite:
-            if dry_run:
-                print(f"[DRY] would delete WATCHLIST snapshots for {sym} in [{global_start_dt}, {global_end_dt})")
-            else:
-                delete_watchlist_snapshots_in_range(cn, ticker_id, global_start_dt, global_end_dt)
+            delete_snapshots_in_range(cn, ticker_id, "WATCHLIST", global_start_dt, global_end_dt, dry_run=dry_run)
 
-        all_rows: List[Tuple[dt.datetime, float, str]] = []
+        inserted_for_sym = 0
 
-        for (start, end, interval, label) in windows:
+        for interval, days in windows:
+            start = end_excl - dt.timedelta(days=days)
+            start_dt = dt.datetime.combine(start, dt.time.min)
+            end_dt = dt.datetime.combine(end_excl, dt.time.min)
+
             try:
-                df = yf_history(sym, start, end, interval=interval)
+                df = yf_history(sym, start=start, end=end_excl, interval=interval)
             except Exception as e:
                 print(f"[warn] yfinance history failed {sym} interval={interval}: {e}")
                 df = None
@@ -367,34 +657,53 @@ def backfill_watchlist_history(cn, symbols_csv: Optional[str], end_date: dt.date
                 continue
 
             closes = df["Close"].dropna()
-            for ts, px in closes.items():
-                all_rows.append((to_naive_datetime(ts), float(px), label))
 
-            print(f"[info] {sym} interval={interval} rows={len(closes)}")
+            known: Dict[dt.datetime, float] = {}
+            for ts, px in closes.items():
+                dts = to_naive_datetime(ts)
+                if do_bucket:
+                    dts = bucket_ts(dts, interval)
+                known[dts] = float(px)
+
+            if not do_bucket:
+                rows = sorted([(ts, px) for ts, px in known.items()], key=lambda x: x[0])
+                inserted_for_sym += insert_snapshots_phase(
+                    cn, ticker_id, "WATCHLIST", rows, source=f"yfinance_history:{interval}", dry_run=dry_run
+                )
+                print(f"[info] {sym} interval={interval} rows={len(rows)} inserted={len(rows)}")
+                if sleep_s:
+                    time.sleep(sleep_s)
+                continue
+
+            prior = None if dry_run else fetch_last_snapshot_before(cn, ticker_id, "WATCHLIST", start_dt)
+            prior_price = prior[1] if prior else None
+
+            grid = build_grid(start_dt, end_dt, interval)
+            real_rows, ffill_rows = ffill_on_grid(grid, known, prior_price)
+
+            inserted_for_sym += insert_snapshots_phase(
+                cn, ticker_id, "WATCHLIST", real_rows, source=f"yfinance_history:{interval}", dry_run=dry_run
+            )
+            inserted_for_sym += insert_snapshots_phase(
+                cn,
+                ticker_id,
+                "WATCHLIST",
+                ffill_rows,
+                source=f"ffill_grid:{'3h' if interval=='1h' else interval}",
+                dry_run=dry_run,
+            )
+
+            print(
+                f"[info] {sym} interval={interval} grid={len(grid)} real={len(real_rows)} ffill={len(ffill_rows)}"
+            )
+
             if sleep_s:
                 time.sleep(sleep_s)
-
-        dedup: Dict[dt.datetime, Tuple[float, str]] = {}
-        for ts, px, label in all_rows:
-            dedup[ts] = (px, label)
-
-        final = sorted([(ts, v[0], v[1]) for ts, v in dedup.items()], key=lambda x: x[0])
-
-        inserted_for_sym = 0
-        by_label: Dict[str, List[Tuple[dt.datetime, float]]] = {}
-        for ts, px, label in final:
-            by_label.setdefault(label, []).append((ts, px))
-
-        for label, rows in by_label.items():
-            inserted_for_sym += insert_watchlist_snapshots(
-                cn, ticker_id, rows, source=f"yfinance_history:{label}", dry_run=dry_run
-            )
 
         total_inserted += inserted_for_sym
         print(f"[ok] {sym} inserted={inserted_for_sym}")
 
-    print(f"[summary] total_inserted={total_inserted} overwrite={overwrite} end_date={end_date}")
-
+    print(f"[summary] total_inserted={total_inserted} overwrite={overwrite} end_date={end_date} bucket={do_bucket}")
 
 def set_watchlist_initial_price(cn, symbols_csv: Optional[str], price_date: dt.date, sleep_s: float, dry_run: bool):
     ensure_watchlist_initial_price_columns(cn)
@@ -428,13 +737,13 @@ def set_watchlist_initial_price(cn, symbols_csv: Optional[str], price_date: dt.d
     print("[ok] initial_price update done")
 
 
-# (Rest of the file — including ffill-watchlist-grid and CLI — should remain
-# exactly as you currently have it, unchanged.)
-
+# -------------------------
+# Main CLI
+# -------------------------
 def main():
     ap = argparse.ArgumentParser(description="Local maintenance for portfolio DB")
-    ap.add_argument("--env-file")
-    ap.add_argument("--symbols")
+    ap.add_argument("--env-file", help="Path to env file with DB_* keys (KEY=VALUE lines)")
+    ap.add_argument("--symbols", help="Comma-separated symbols to restrict some operations")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--sleep", type=float, default=0.0)
 
@@ -448,6 +757,14 @@ def main():
 
     ap.add_argument("--set-watchlist-initial-price", action="store_true")
     ap.add_argument("--initial-price-date", default="2026-02-12")
+
+    # NEW: tiered history for one symbol
+    ap.add_argument("--backfill-symbol-tiered", action="store_true", help="Tiered: 1h/7d + 1d/60d + 1wk/365d for one symbol")
+    ap.add_argument("--history-symbol", help="Symbol to backfill (e.g. LYM9.F)")
+    ap.add_argument("--history-end-date", help="End date YYYY-MM-DD (inclusive). Default: today")
+    ap.add_argument("--history-phase", default="WATCHLIST", help="WATCHLIST or HOLDING (default WATCHLIST)")
+    ap.add_argument("--history-overwrite", action="store_true", help="Delete existing snapshots in tier window before inserting")
+    ap.add_argument("--history-bucket", action="store_true", help="Bucket timestamps to shared grid (recommended)")
 
     args = ap.parse_args()
 
@@ -507,6 +824,7 @@ def main():
             symbols_csv=args.symbols,
             end_date=end_date,
             overwrite=args.overwrite_watchlist,
+            do_bucket=args.history_bucket,
             sleep_s=args.sleep,
             dry_run=args.dry_run,
         )
@@ -521,12 +839,28 @@ def main():
             dry_run=args.dry_run,
         )
 
+    if args.backfill_symbol_tiered:
+        if not args.history_symbol:
+            raise SystemExit("--backfill-symbol-tiered requires --history-symbol")
+        end_date = parse_ymd(args.history_end_date) if args.history_end_date else dt.datetime.utcnow().date()
+        backfill_symbol_tiered(
+            cn=cn,
+            symbol=args.history_symbol.strip(),
+            end_date_inclusive=end_date,
+            phase=args.history_phase.strip().upper(),
+            overwrite=args.history_overwrite,
+            do_bucket=args.history_bucket,
+            sleep_s=args.sleep,
+            dry_run=args.dry_run,
+        )
+
     if (
         not args.ensure_brokers
         and not args.refresh_tickers
         and not args.update_currency
         and not args.backfill_watchlist_history
         and not args.set_watchlist_initial_price
+        and not args.backfill_symbol_tiered
     ):
         ap.print_help()
         return 2
