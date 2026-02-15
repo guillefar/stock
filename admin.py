@@ -23,6 +23,87 @@ def is_rate_limit_error(e: Exception) -> bool:
     msg = str(e).lower()
     return ("ratelimit" in msg) or ("rate limit" in msg) or ("too many requests" in msg) or ("http 429" in msg) or ("status code 429" in msg)
 
+def pick(*vals):
+    """Return first non-empty (not None, not '')"""
+    for v in vals:
+        if v is None:
+            continue
+        if isinstance(v, str) and v.strip() == "":
+            continue
+        return v
+    return None
+
+def get_table_columns(cur, table_name: str) -> set:
+    cur.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = %s
+        """,
+        (table_name,),
+    )
+    return {r[0] for r in cur.fetchall()}
+
+def update_ticker_profile_from_yf(cur, symbol: str, info: dict, tickers_cols: set) -> None:
+    """Best-effort enrichment of tickers.* from yfinance get_info().
+
+    Updates only columns that exist in the current schema. Never overwrites with NULL/empty.
+    """
+    if not info:
+        return
+
+    # yfinance keys (camelCase) -> candidate DB columns (snake_case and camelCase)
+    mapping = {
+        "name": [("name", pick(info.get("longName"), info.get("shortName")))],
+        "long_business_summary": [
+            ("long_business_summary", info.get("longBusinessSummary")),
+            ("longBusinessSummary", info.get("longBusinessSummary")),
+        ],
+        "industry": [("industry", info.get("industry"))],
+        "industry_disp": [
+            ("industry_disp", pick(info.get("industryDisp"), info.get("industry"))),
+            ("industryDisp", pick(info.get("industryDisp"), info.get("industry"))),
+        ],
+        "sector": [("sector", info.get("sector"))],
+        "sector_disp": [
+            ("sector_disp", pick(info.get("sectorDisp"), info.get("sector"))),
+            ("sectorDisp", pick(info.get("sectorDisp"), info.get("sector"))),
+        ],
+        "market": [("market", info.get("market"))],
+        "short_name": [
+            ("short_name", info.get("shortName")),
+            ("shortName", info.get("shortName")),
+        ],
+        "website": [("website", info.get("website"))],
+        "quote_type": [
+            ("quote_type", info.get("quoteType")),
+            ("quoteType", info.get("quoteType")),
+        ],
+    }
+
+    set_clauses = []
+    params = []
+    for _, candidates in mapping.items():
+        for col, val in candidates:
+            if col not in tickers_cols:
+                continue
+            if val is None:
+                continue
+            if isinstance(val, str) and val.strip() == "":
+                continue
+            # COALESCE keeps existing value when val is NULL; here val is non-null, so it sets.
+            set_clauses.append(f"{col} = COALESCE(%s, {col})")
+            params.append(val)
+            break  # don't try alternate column names for the same field
+
+    if not set_clauses:
+        return
+
+    sql = "UPDATE tickers SET " + ", ".join(set_clauses) + " WHERE symbol=%s"
+    params.append(symbol)
+    cur.execute(sql, tuple(params))
+
 def yf_history_with_retry(tk: yf.Ticker, *, start: dt.date, end: dt.date, interval: str, max_attempts: int = 6):
     last_err = None
     for attempt in range(1, max_attempts + 1):
@@ -295,13 +376,14 @@ def main():
         except Exception:
             die("price must be a number if provided")
 
-    # longName -> tickers.name
+    # longName -> tickers.name (+ keep full info for enrichment)
+    info_full = None
     long_name = None
     try:
-        info = tk.get_info()
-        long_name = info.get("longName") or info.get("shortName")
+        info_full = tk.get_info()
+        long_name = info_full.get("longName") or info_full.get("shortName")
     except Exception:
-        pass
+        info_full = None
 
     qty = dec_or_none(qty_in) if qty_in else None
     price_dec = decimal.Decimal(str(last_price)) if last_price is not None else None
@@ -317,6 +399,7 @@ def main():
         connect_timeout=10,
     )
     cur = cn.cursor()
+    tickers_cols = get_table_columns(cur, 'tickers')
 
     def resolve_broker_id(broker_name: str):
         if is_blank(broker_name):
@@ -353,6 +436,11 @@ def main():
             "CALL sp_buy(%s,%s,%s,%s,%s,%s)",
             (symbol, currency, str(qty), str(price_dec), long_name, (note_in or None)),
         )
+        # Best-effort enrichment of ticker profile from yfinance
+        try:
+            update_ticker_profile_from_yf(cur, symbol, info_full or {}, tickers_cols)
+        except Exception as e:
+            print(f"::warning::ticker enrichment failed for {symbol}: {e}")
         insert_txn("BUY", qty, price_dec, currency, note_in, broker_id)
 
         print(
@@ -388,6 +476,12 @@ def main():
         if not r:
             die(f"after sp_add_watch, ticker not found in tickers for {symbol}")
         ticker_id = r[0]
+
+        # Best-effort enrichment of ticker profile from yfinance
+        try:
+            update_ticker_profile_from_yf(cur, symbol, info_full or {}, tickers_cols)
+        except Exception as e:
+            print(f"::warning::ticker enrichment failed for {symbol}: {e}")
 
         # Backfill history immediately (WATCHLIST phase)
         backfill_watch_history(cur, ticker_id, symbol)
