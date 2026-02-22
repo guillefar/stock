@@ -3,9 +3,6 @@ import datetime as dt
 import pymysql
 import yfinance as yf
 
-# Canonical minute offset to align snapshots (matches collector)
-SNAP_MINUTE_OFFSET = 7
-
 def die(msg: str) -> None:
     print(f"::error::{msg}")
     sys.exit(1)
@@ -23,87 +20,6 @@ def is_rate_limit_error(e: Exception) -> bool:
     msg = str(e).lower()
     return ("ratelimit" in msg) or ("rate limit" in msg) or ("too many requests" in msg) or ("http 429" in msg) or ("status code 429" in msg)
 
-def pick(*vals):
-    """Return first non-empty (not None, not '')"""
-    for v in vals:
-        if v is None:
-            continue
-        if isinstance(v, str) and v.strip() == "":
-            continue
-        return v
-    return None
-
-def get_table_columns(cur, table_name: str) -> set:
-    cur.execute(
-        """
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_schema = DATABASE()
-          AND table_name = %s
-        """,
-        (table_name,),
-    )
-    return {r[0] for r in cur.fetchall()}
-
-def update_ticker_profile_from_yf(cur, symbol: str, info: dict, tickers_cols: set) -> None:
-    """Best-effort enrichment of tickers.* from yfinance get_info().
-
-    Updates only columns that exist in the current schema. Never overwrites with NULL/empty.
-    """
-    if not info:
-        return
-
-    # yfinance keys (camelCase) -> candidate DB columns (snake_case and camelCase)
-    mapping = {
-        "name": [("name", pick(info.get("longName"), info.get("shortName")))],
-        "long_business_summary": [
-            ("long_business_summary", info.get("longBusinessSummary")),
-            ("longBusinessSummary", info.get("longBusinessSummary")),
-        ],
-        "industry": [("industry", info.get("industry"))],
-        "industry_disp": [
-            ("industry_disp", pick(info.get("industryDisp"), info.get("industry"))),
-            ("industryDisp", pick(info.get("industryDisp"), info.get("industry"))),
-        ],
-        "sector": [("sector", info.get("sector"))],
-        "sector_disp": [
-            ("sector_disp", pick(info.get("sectorDisp"), info.get("sector"))),
-            ("sectorDisp", pick(info.get("sectorDisp"), info.get("sector"))),
-        ],
-        "market": [("market", info.get("market"))],
-        "short_name": [
-            ("short_name", info.get("shortName")),
-            ("shortName", info.get("shortName")),
-        ],
-        "website": [("website", info.get("website"))],
-        "quote_type": [
-            ("quote_type", info.get("quoteType")),
-            ("quoteType", info.get("quoteType")),
-        ],
-    }
-
-    set_clauses = []
-    params = []
-    for _, candidates in mapping.items():
-        for col, val in candidates:
-            if col not in tickers_cols:
-                continue
-            if val is None:
-                continue
-            if isinstance(val, str) and val.strip() == "":
-                continue
-            # COALESCE keeps existing value when val is NULL; here val is non-null, so it sets.
-            set_clauses.append(f"{col} = COALESCE(%s, {col})")
-            params.append(val)
-            break  # don't try alternate column names for the same field
-
-    if not set_clauses:
-        return
-
-    sql = "UPDATE tickers SET " + ", ".join(set_clauses) + " WHERE symbol=%s"
-    params.append(symbol)
-    cur.execute(sql, tuple(params))
-
 def yf_history_with_retry(tk: yf.Ticker, *, start: dt.date, end: dt.date, interval: str, max_attempts: int = 6):
     last_err = None
     for attempt in range(1, max_attempts + 1):
@@ -116,7 +32,6 @@ def yf_history_with_retry(tk: yf.Ticker, *, start: dt.date, end: dt.date, interv
             )
         except Exception as e:
             last_err = e
-            # Retry mostly on rate limits/transient issues
             if not is_rate_limit_error(e) and attempt >= 2:
                 break
             sleep_s = min(120, (2 ** (attempt - 1)) * 2) + random.uniform(0, 1.0)
@@ -126,10 +41,8 @@ def yf_history_with_retry(tk: yf.Ticker, *, start: dt.date, end: dt.date, interv
     return None
 
 def to_naive_datetime(x) -> dt.datetime:
-    # yfinance returns pandas timestamps; avoid importing pandas here by using duck-typing
     try:
-        py = x.to_pydatetime()
-        x = py
+        x = x.to_pydatetime()
     except Exception:
         pass
     if isinstance(x, dt.datetime):
@@ -138,101 +51,31 @@ def to_naive_datetime(x) -> dt.datetime:
         return x.replace(tzinfo=None)
     raise TypeError(f"Unsupported datetime type: {type(x)}")
 
-
-def bucket_ts(ts: dt.datetime, tier: str, minute_offset: int = SNAP_MINUTE_OFFSET) -> dt.datetime:
+def bucket_to_07(ts: dt.datetime, interval: str) -> dt.datetime:
     """
-    Bucket timestamps onto a canonical grid to align across symbols for Grafana.
-
-    We intentionally map intraday watchlist history onto the production collector cadence:
-      - tier '1h' (yfinance fetch) -> 3-hour buckets at HH where HH % 3 == 0, minute=:07
-      - tier '1d' -> 00:07
-      - tier '1wk' -> Monday 00:07
+    Canonical bucket that matches your collector convention (:07).
+    - 1h: HH:07:00
+    - 1d: 00:07:00
+    - 1wk: Monday 00:07:00
     """
-    if tier == "1h":
-        h = ts.hour - (ts.hour % 3)
-        return ts.replace(hour=h, minute=minute_offset, second=0, microsecond=0)
-    if tier == "1d":
-        return dt.datetime.combine(ts.date(), dt.time(hour=0, minute=minute_offset))
-    if tier == "1wk":
+    if interval == "1h":
+        return ts.replace(minute=7, second=0, microsecond=0)
+    if interval == "1d":
+        d = ts.date()
+        return dt.datetime.combine(d, dt.time(hour=0, minute=7))
+    if interval == "1wk":
         d = ts.date()
         monday = d - dt.timedelta(days=d.weekday())
-        return dt.datetime.combine(monday, dt.time(hour=0, minute=minute_offset))
+        return dt.datetime.combine(monday, dt.time(hour=0, minute=7))
     return ts
-
-def fetch_last_snapshot_before(cur, ticker_id: int, phase: str, before_ts: dt.datetime):
-    """Return latest snapshot price strictly before before_ts for (ticker_id, phase)."""
-    cur.execute(
-        """
-        SELECT as_of_date, price
-        FROM price_snapshots
-        WHERE ticker_id=%s AND phase=%s AND as_of_date < %s
-        ORDER BY as_of_date DESC
-        LIMIT 1
-        """,
-        (ticker_id, phase, before_ts),
-    )
-    row = cur.fetchone()
-    if not row:
-        return None
-    # cursor is tuple-based
-    return (row[0], float(row[1]))
-
-
-def build_grid(start_dt: dt.datetime, end_dt_exclusive: dt.datetime, tier: str, minute_offset: int = SNAP_MINUTE_OFFSET):
-    """Build canonical grid timestamps >= start_dt and < end_dt_exclusive."""
-    grid = []
-
-    if tier == "1d":
-        cur = dt.datetime.combine(start_dt.date(), dt.time(hour=0, minute=minute_offset))
-        step = dt.timedelta(days=1)
-    elif tier == "1wk":
-        d = start_dt.date()
-        monday = d - dt.timedelta(days=d.weekday())
-        cur = dt.datetime.combine(monday, dt.time(hour=0, minute=minute_offset))
-        step = dt.timedelta(days=7)
-    else:  # '1h' fetched -> 3h grid
-        base = start_dt.replace(minute=minute_offset, second=0, microsecond=0)
-        h = base.hour - (base.hour % 3)
-        cur = base.replace(hour=h)
-        if cur < start_dt:
-            cur += dt.timedelta(hours=3)
-        step = dt.timedelta(hours=3)
-
-    while cur < end_dt_exclusive:
-        if cur >= start_dt:
-            grid.append(cur)
-        cur += step
-    return grid
-
-
-def ffill_on_grid(grid, known, prior_price):
-    """Return (real_rows, ffill_rows) as lists of (ts, price)."""
-    real_rows = []
-    ffill_rows = []
-    last = prior_price
-    for g in grid:
-        if g in known:
-            last = known[g]
-            real_rows.append((g, last))
-        elif last is not None:
-            ffill_rows.append((g, last))
-    return real_rows, ffill_rows
-
 
 def backfill_watch_history(cur, ticker_id: int, symbol: str):
     """
-    Backfill history for WATCHLIST phase using a shared timestamp grid + forward-fill
-    (prevents Grafana dots/gaps when multiple series are plotted together).
-
-    Tier windows (fixed):
-      - 1wk: last 1 year (bucket to Monday 00:07)
-      - 1d:  last 60 days (bucket to 00:07)
-      - 1h:  last 7 days fetched from yfinance, but mapped to a 3-hour grid at :07
-
-    Notes:
-      - INSERT IGNORE respects UNIQUE(ticker_id, as_of_date)
-      - We process tiers oldest->newest so intraday can seed from daily if needed.
-      - Forward-fill happens *within WATCHLIST phase only* (never crosses to HOLDING).
+    Backfill WATCHLIST history on add_watch with tiered strategy:
+      - 1h for 7 days
+      - 1d for 60 days
+      - 1wk for 365 days
+    Buckets timestamps to :07 to avoid Grafana gaps/dots.
     """
     ENABLE = (os.getenv("BACKFILL_WATCH_HISTORY", "1") == "1")
     if not ENABLE:
@@ -240,20 +83,23 @@ def backfill_watch_history(cur, ticker_id: int, symbol: str):
         return
 
     tk = yf.Ticker(symbol)
-    today = dt.datetime.utcnow().date()
-    end_excl = today + dt.timedelta(days=1)
 
-    # Oldest -> newest (important for seeding intraday ffill)
+    # Use UTC "today" as end anchor for history pulls
+    end_inclusive = dt.datetime.now(dt.timezone.utc).date()
+    end_excl = end_inclusive + dt.timedelta(days=1)
+
     windows = [
-        (end_excl - dt.timedelta(days=365), end_excl, "1wk"),
-        (end_excl - dt.timedelta(days=60),  end_excl, "1d"),
-        (end_excl - dt.timedelta(days=7),   end_excl, "1h"),
+        ("1h", 7),
+        ("1d", 60),
+        ("1wk", 365),
     ]
 
-    total_rows = 0
+    # Dedup by bucketed timestamp; keep last seen price
+    dedup = {}
 
-    for start, end, interval in windows:
-        df = yf_history_with_retry(tk, start=start, end=end, interval=interval)
+    for interval, days in windows:
+        start = end_excl - dt.timedelta(days=days)
+        df = yf_history_with_retry(tk, start=start, end=end_excl, interval=interval)
         if df is None or getattr(df, "empty", True):
             print(f"::notice::no history for {symbol} interval={interval}")
             continue
@@ -264,53 +110,34 @@ def backfill_watch_history(cur, ticker_id: int, symbol: str):
             print(f"::warning::unexpected history format for {symbol} interval={interval}")
             continue
 
-        # Collect known points bucketed to the canonical grid
-        known = {}
         count = 0
         for idx, px in closes.items():
-            ts = bucket_ts(to_naive_datetime(idx), interval)
+            ts = bucket_to_07(to_naive_datetime(idx), interval)
             try:
-                known[ts] = float(px)
+                dedup[ts] = float(px)
                 count += 1
             except Exception:
                 continue
 
         print(f"::notice::{symbol} history interval={interval} rows={count}")
 
-        if not known:
-            continue
+    if not dedup:
+        print(f"::warning::no history rows collected for {symbol}")
+        return
 
-        # Build grid and forward-fill
-        start_dt = dt.datetime.combine(start, dt.time.min)
-        end_dt = dt.datetime.combine(end, dt.time.min)
+    rows = sorted(
+        [(ticker_id, ts, price, "yfinance_history:tiered", "WATCHLIST") for ts, price in dedup.items()],
+        key=lambda x: x[1]
+    )
 
-        prior = fetch_last_snapshot_before(cur, ticker_id, "WATCHLIST", start_dt)
-        prior_price = prior[1] if prior else None
-
-        grid = build_grid(start_dt, end_dt, interval)
-        real_rows, ffill_rows = ffill_on_grid(grid, known, prior_price)
-
-        # Insert (real + ffill)
-        def _insert(rows, source):
-            nonlocal total_rows
-            if not rows:
-                return
-            cur.executemany(
-                """
-                INSERT IGNORE INTO price_snapshots (ticker_id, as_of_date, price, price_source, phase)
-                VALUES (%s,%s,%s,%s,%s)
-                """,
-                [(ticker_id, ts, price, source, "WATCHLIST") for (ts, price) in rows],
-            )
-            total_rows += len(rows)
-
-        _insert(real_rows, f"yfinance_history:{interval}")
-        tier_label = "3h" if interval == "1h" else interval
-        _insert(ffill_rows, f"ffill_grid:{tier_label}")
-
-        print(f"::notice::{symbol} interval={interval} grid={len(grid)} real={len(real_rows)} ffill={len(ffill_rows)}")
-
-    print(f"::notice::backfill inserted (ignore-collisions) rows={total_rows} for {symbol}")
+    cur.executemany(
+        """
+        INSERT IGNORE INTO price_snapshots (ticker_id, as_of_date, price, price_source, phase)
+        VALUES (%s,%s,%s,%s,%s)
+        """,
+        rows
+    )
+    print(f"::notice::watch history inserted rows={len(rows)} for {symbol}")
 
 def main():
     action    = (os.getenv("ACTION") or "").strip().lower()
@@ -319,7 +146,7 @@ def main():
     price_in  = (os.getenv("PRICE_IN") or "").strip()
     curr_in   = (os.getenv("CURR_IN") or "").strip()
     note_in   = (os.getenv("NOTE_IN") or "").strip()
-    broker_in = (os.getenv("BROKER_IN") or "").strip()  # optional
+    broker_in = (os.getenv("BROKER_IN") or "").strip()
 
     if not symbol:
         die("symbol is required")
@@ -345,7 +172,6 @@ def main():
             currency = "USD"
             print(f"::warning::currency not found for {symbol}, defaulting to USD")
 
-    # price resolver (buy/sell if price blank; watchlist also tries)
     def resolve_last_price():
         fi = getattr(tk, "fast_info", None)
         if isinstance(fi, dict):
@@ -376,19 +202,16 @@ def main():
         except Exception:
             die("price must be a number if provided")
 
-    # longName -> tickers.name (+ keep full info for enrichment)
-    info_full = None
     long_name = None
     try:
-        info_full = tk.get_info()
-        long_name = info_full.get("longName") or info_full.get("shortName")
+        info = tk.get_info()
+        long_name = info.get("longName") or info.get("shortName")
     except Exception:
-        info_full = None
+        pass
 
     qty = dec_or_none(qty_in) if qty_in else None
     price_dec = decimal.Decimal(str(last_price)) if last_price is not None else None
 
-    # DB connect
     cn = pymysql.connect(
         host=os.getenv("DB_HOST"),
         user=os.getenv("DB_USER"),
@@ -399,7 +222,6 @@ def main():
         connect_timeout=10,
     )
     cur = cn.cursor()
-    tickers_cols = get_table_columns(cur, 'tickers')
 
     def resolve_broker_id(broker_name: str):
         if is_blank(broker_name):
@@ -436,17 +258,8 @@ def main():
             "CALL sp_buy(%s,%s,%s,%s,%s,%s)",
             (symbol, currency, str(qty), str(price_dec), long_name, (note_in or None)),
         )
-        # Best-effort enrichment of ticker profile from yfinance
-        try:
-            update_ticker_profile_from_yf(cur, symbol, info_full or {}, tickers_cols)
-        except Exception as e:
-            print(f"::warning::ticker enrichment failed for {symbol}: {e}")
         insert_txn("BUY", qty, price_dec, currency, note_in, broker_id)
-
-        print(
-            f"Buy OK -> {symbol} qty={qty} price={price_dec} cc={currency} "
-            f"broker={(broker_in or None)!r} name={long_name!r} note={(note_in or None)!r}"
-        )
+        print(f"Buy OK -> {symbol}")
 
     elif action == "sell":
         if qty is None or qty <= 0:
@@ -458,11 +271,7 @@ def main():
             die("price could not be resolved for sell action")
 
         insert_txn("SELL", qty, price_dec, currency, note_in, broker_id)
-
-        print(
-            f"Sell OK -> {symbol} qty={qty} price={price_dec} cc={currency} "
-            f"broker={(broker_in or None)!r} note={(note_in or None)!r}"
-        )
+        print(f"Sell OK -> {symbol}")
 
     elif action == "add_watch":
         cur.execute(
@@ -470,26 +279,15 @@ def main():
             (symbol, currency, (note_in or None), long_name, (str(price_dec) if price_dec is not None else None)),
         )
 
-        # Resolve ticker_id for inserts
         cur.execute("SELECT id FROM tickers WHERE symbol=%s", (symbol,))
         r = cur.fetchone()
         if not r:
             die(f"after sp_add_watch, ticker not found in tickers for {symbol}")
         ticker_id = r[0]
 
-        # Best-effort enrichment of ticker profile from yfinance
-        try:
-            update_ticker_profile_from_yf(cur, symbol, info_full or {}, tickers_cols)
-        except Exception as e:
-            print(f"::warning::ticker enrichment failed for {symbol}: {e}")
-
-        # Backfill history immediately (WATCHLIST phase)
         backfill_watch_history(cur, ticker_id, symbol)
 
-        print(
-            f"Watch OK -> {symbol} cc={currency} name={long_name!r} "
-            f"initial_price={(price_dec if price_dec is not None else None)!r} note={(note_in or None)!r}"
-        )
+        print(f"Watch OK -> {symbol}")
 
     elif action == "deactivate_watch":
         cur.execute("CALL sp_deactivate_watch(%s)", (symbol,))
@@ -497,41 +295,6 @@ def main():
 
     else:
         die(f"unsupported action: {action}")
-
-    # Feedback (quick visibility)
-    cur.execute(
-        """
-        SELECT t.id, t.symbol, t.currency, t.name
-        FROM tickers t
-        WHERE t.symbol=%s
-        """,
-        (symbol,),
-    )
-    print("Ticker ->", cur.fetchall())
-
-    cur.execute(
-        """
-        SELECT w.ticker_id, w.active, w.note, w.initial_price, w.initial_price_time
-        FROM watchlist w
-        JOIN tickers t ON t.id=w.ticker_id
-        WHERE t.symbol=%s
-        """,
-        (symbol,),
-    )
-    print("Watchlist ->", cur.fetchall())
-
-    cur.execute(
-        """
-        SELECT ps.as_of_date, ps.price, ps.price_source, ps.phase
-        FROM price_snapshots ps
-        JOIN tickers t ON t.id=ps.ticker_id
-        WHERE t.symbol=%s
-        ORDER BY ps.as_of_date DESC
-        LIMIT 5
-        """,
-        (symbol,),
-    )
-    print("Latest snapshots ->", cur.fetchall())
 
 if __name__ == "__main__":
     main()
